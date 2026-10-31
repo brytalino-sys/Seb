@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Себес — калькулятор для кондитеров</title>
+<meta name="description" content="Расчёт себестоимости, заказы и журнал отказов для домашних кондитеров">
+<meta name="theme-color" content="#FDF9F7">
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="styles.css">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+
+<div id="app">
+  <header class="topbar">
+    <button class="icon-btn" id="btnBack" hidden aria-label="Назад">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <h1 id="screenTitle">Рецепты</h1>
+    <button class="icon-btn" id="btnTheme" aria-label="Сменить тему">
+      <svg viewBox="0 0 24 24" width="20" height="20"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </header>
+
+  <main id="view" class="view"></main>
+
+  <div id="mainButtonSlot" class="mainbtn-slot" hidden>
+    <button id="mainButton" class="btn-primary"></button>
+  </div>
+
+  <nav class="tabbar" id="tabbar">
+    <button class="tab" data-tab="recipes">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 4h12a2 2 0 012 2v14H6a2 2 0 01-2-2V4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 8h6M8 12h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span>Рецепты</span>
+    </button>
+    <button class="tab" data-tab="ingredients">
+      <svg viewBox="0 0 24 24" width="22" height="22"><circle cx="8" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="16" cy="16" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="16" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="8" cy="16" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+      <span>Ингредиенты</span>
+    </button>
+    <button class="tab" data-tab="orders">
+      <svg viewBox="0 0 24 24" width="22" height="22"><rect x="4" y="4" width="16" height="17" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 3v3M16 3v3M8 11h8M8 15h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span>Заказы</span>
+    </button>
+    <button class="tab" data-tab="analytics">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 18l5-6 4 4 7-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Аналитика</span>
+    </button>
+  </nav>
+</div>
+
+<div id="sheet" class="sheet" hidden>
+  <div class="sheet-backdrop" data-close></div>
+  <div class="sheet-body" id="sheetBody"></div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="calc.js"></script>
+<script src="store.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

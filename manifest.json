@@ -1,0 +1,14 @@
+{
+  "name": "Себес — калькулятор для кондитеров",
+  "short_name": "Себес",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#FDF9F7",
+  "theme_color": "#FDF9F7",
+  "orientation": "portrait",
+  "lang": "ru",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

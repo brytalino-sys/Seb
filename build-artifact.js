@@ -1,0 +1,49 @@
+/* Собирает однофайловую версию для публикации.
+   Внешние скрипты там запрещены, поэтому всё инлайнится,
+   а SDK Telegram исключается — приложение и без него работает. */
+const fs = require('fs');
+const path = require('path');
+const d = __dirname;
+const read = (f) => fs.readFileSync(path.join(d, f), 'utf8');
+
+const html = read('index.html');
+const body = html
+  .slice(html.indexOf('<div id="app">'), html.indexOf('<script src="calc.js">'))
+  .trim();
+
+const css = read('styles.css');
+let js = ['calc.js', 'store.js', 'app.js'].map(read).join('\n');
+
+/* В окне просмотра артефакта скачивание файлов запрещено,
+   поэтому кнопку «Сохранить файлом» убираем — остаётся копирование текста. */
+js = js.replace(
+  "'<div style=\"height:8px\"></div><button class=\"btn-ghost\" id=\"exFile\">Сохранить файлом</button>' +",
+  "'' +");
+js = js.replace(
+  /\n\s*root\.querySelector\('#exFile'\)\.addEventListener[\s\S]*?\n        \}\);/,
+  "");
+if (js.indexOf('exFile') !== -1) { console.log('  ВНИМАНИЕ: кнопка скачивания осталась в сборке'); }
+else { console.log('  кнопка скачивания исключена из однофайловой сборки'); }
+
+const out = `<title>Себес</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="theme-color" content="#FDF9F7">
+<style>
+${css}
+</style>
+
+${body}
+
+<script>
+${js}
+</script>
+`;
+
+fs.writeFileSync(path.join(d, 'artifact.html'), out);
+
+const bad = [/<!DOCTYPE/i, /<html[\s>]/i, /<head[\s>]/i, /<body[\s>]/i, /telegram\.org/];
+let problems = 0;
+bad.forEach((re) => {
+  if (re.test(out)) { console.log('  ПРОБЛЕМА: найдено ' + re); problems++; }
+});
+console.log('artifact.html — ' + (out.length / 1024).toFixed(1) + ' KB, нарушений контракта: ' + problems);
