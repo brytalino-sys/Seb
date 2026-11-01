@@ -22,6 +22,10 @@ js = js.replace(
 js = js.replace(
   /\n\s*root\.querySelector\('#exFile'\)\.addEventListener[\s\S]*?\n        \}\);/,
   "");
+/* Внутри окна просмотра Telegram не бывает: загрузчик SDK не нужен */
+js = js.replace(
+  /\n  if \(launchedFromTelegram\(\)\) \{[\s\S]*?\n  \}\n/,
+  "\n");
 if (js.indexOf('exFile') !== -1) { console.log('  ВНИМАНИЕ: кнопка скачивания осталась в сборке'); }
 else { console.log('  кнопка скачивания исключена из однофайловой сборки'); }
 

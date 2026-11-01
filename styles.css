@@ -83,6 +83,10 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+/* Атрибут hidden должен побеждать любые display из компонентов,
+   иначе скрытая шторка остаётся поверх экрана и ловит клики. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0; padding: 0;
   background: var(--bg);
@@ -106,8 +110,8 @@ body::before {
   position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
   display: flex; align-items: center; gap: 4px;
   padding-block: 10px;
-  padding-left: max(16px, env(safe-area-inset-left, 0px));
-  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px), calc((100% - 560px) / 2 + 16px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px), calc((100% - 560px) / 2 + 16px));
   background: var(--bg);
   border-bottom: 1px solid transparent;
 }
@@ -297,8 +301,8 @@ body.tg .view { padding-bottom: 110px; }
   display: grid; grid-template-columns: repeat(4, 1fr);
   height: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
   padding-bottom: env(safe-area-inset-bottom, 0px);
-  padding-left: env(safe-area-inset-left, 0px);
-  padding-right: env(safe-area-inset-right, 0px);
+  padding-left: max(env(safe-area-inset-left, 0px), calc((100% - 560px) / 2));
+  padding-right: max(env(safe-area-inset-right, 0px), calc((100% - 560px) / 2));
   background: var(--surface); border-top: 1px solid var(--border);
 }
 .tab {

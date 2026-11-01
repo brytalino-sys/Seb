@@ -5,8 +5,18 @@
 (function () {
   'use strict';
 
-  var tg = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData !== undefined
-    ? window.Telegram.WebApp : null;
+  /* Telegram подключается, только если приложение реально открыто внутри него.
+     В обычном браузере SDK тоже создаёт window.Telegram.WebApp (с пустым initData),
+     поэтому проверять сам объект нельзя — смотрим на параметры запуска. */
+  var tg = null;
+
+  function launchedFromTelegram() {
+    try {
+      if (/tgWebApp(Data|Platform|Version)=/.test(location.hash)) return true;
+      if (sessionStorage.getItem('__telegram__initParams')) return true;
+    } catch (e) {}
+    return !!window.TelegramWebviewProxy;
+  }
 
   var viewEl = document.getElementById('view');
   var titleEl = document.getElementById('screenTitle');
@@ -153,7 +163,7 @@
     }
   }
   mainBtn.addEventListener('click', function () { haptic('medium'); if (mainAction) mainAction(); });
-  if (tg) tg.MainButton.onClick(function () { if (mainAction) mainAction(); });
+
 
   /* ---------------- шторка ---------------- */
   function openSheet(title, bodyHtml, onMount) {
@@ -1658,13 +1668,28 @@
   /* ---------------- старт ---------------- */
   applyTheme(Store.state.settings.theme || 'auto');
 
-  if (tg) {
+  function attachTelegram() {
+    var w = window.Telegram && window.Telegram.WebApp;
+    if (!w || !w.initData) return;            // пустой initData = не Telegram
+    tg = w;
     document.body.classList.add('tg');
     try {
       tg.ready(); tg.expand();
       tg.BackButton.onClick(back);
+      tg.MainButton.onClick(function () { if (mainAction) mainAction(); });
       if (tg.colorScheme) applyTheme(tg.colorScheme);
     } catch (e) {}
+    render();
+  }
+
+  /* SDK грузится асинхронно и только внутри Telegram: если сервер Telegram
+     недоступен, страница не ждёт его и не зависает на загрузке. */
+  if (launchedFromTelegram()) {
+    var sdk = document.createElement('script');
+    sdk.src = 'https://telegram.org/js/telegram-web-app.js';
+    sdk.async = true;
+    sdk.onload = attachTelegram;
+    document.head.appendChild(sdk);
   }
 
   render();
