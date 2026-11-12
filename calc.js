@@ -19,6 +19,13 @@
     'шт': 'шт'
   };
 
+  /* Отрицательных количеств, минут и процентов не бывает: всё, что не число
+     или меньше нуля, считаем нулём, чтобы опечатка не уводила цену в минус. */
+  function pos(v) {
+    var n = Number(v);
+    return isFinite(n) && n > 0 ? n : 0;
+  }
+
   function toBase(qty, unit) {
     var f = UNIT_FACTOR[unit];
     if (!f) throw new Error('Неизвестная единица: ' + unit);
@@ -28,17 +35,69 @@
   /* Цена за одну базовую единицу.
      Пример: 850 ₽ за 1 л  ->  850 / 1000 = 0.85 ₽/мл */
   function pricePerBase(ingredient) {
-    var baseAmount = toBase(ingredient.amount, ingredient.unit);
+    var baseAmount = toBase(pos(ingredient.amount), ingredient.unit);
     if (!baseAmount) return 0;
-    return ingredient.price / baseAmount;
+    return pos(ingredient.price) / baseAmount;
   }
 
   /* Стоимость позиции рецепта.
      item: { ingredientId, qty, unit }  — qty в своих единицах */
+  function unitsMatch(item, ingredient) {
+    return !!ingredient && !!BASE_UNIT[item.unit] && BASE_UNIT[item.unit] === BASE_UNIT[ingredient.unit];
+  }
+
+  /* Несовместимые единицы (500 г ингредиента, который продаётся штуками)
+     дают 0 и попадают в список проблем рецепта, а не раздувают сумму. */
   function lineCost(item, ingredient) {
-    if (!ingredient) return 0;
-    var qtyBase = toBase(item.qty, item.unit);
+    if (!ingredient || !UNIT_FACTOR[item.unit] || !UNIT_FACTOR[ingredient.unit]) return 0;
+    if (!unitsMatch(item, ingredient)) return 0;
+    var qtyBase = toBase(pos(item.qty), item.unit);
     return pricePerBase(ingredient) * qtyBase;
+  }
+
+  /* Цена в понятной кондитеру единице: ₽/кг, ₽/л или ₽/шт */
+  function unitPrice(ingredient) {
+    if (!ingredient || !UNIT_FACTOR[ingredient.unit]) return { value: 0, unit: '' };
+    var base = BASE_UNIT[ingredient.unit];
+    var per = pricePerBase(ingredient);
+    if (base === 'г') return { value: per * 1000, unit: 'кг' };
+    if (base === 'мл') return { value: per * 1000, unit: 'л' };
+    return { value: per, unit: 'шт' };
+  }
+
+  /* Масса закладки в граммах. Миллилитры считаем как граммы,
+     штуки — по массе одной штуки, если она указана у ингредиента.
+     Позиции «не растёт с весом» (коробка, топпер) в закладку не входят:
+     их не пекут, и упёк от них не зависит. */
+  function recipeMass(items, ingredientsById) {
+    var grams = 0, unknown = [];
+    (items || []).forEach(function (it) {
+      var ing = ingredientsById[it.ingredientId];
+      if (!ing || !UNIT_FACTOR[it.unit] || it.fixed) return;
+      var base = BASE_UNIT[it.unit];
+      var q = toBase(pos(it.qty), it.unit);
+      if (base === 'г' || base === 'мл') grams += q;
+      else if (Number(ing.pieceMass) > 0) grams += q * Number(ing.pieceMass);
+      else unknown.push(ing.name);
+    });
+    return { grams: grams, unknown: unknown };
+  }
+
+  /* Выход в граммах, если он задан массой */
+  function yieldGrams(amount, unit) {
+    var a = Number(amount) || 0;
+    if (unit === 'кг') return a * 1000;
+    if (unit === 'г') return a;
+    return 0;
+  }
+
+  /* Упёк и потери: доля массы, которая ушла от закладки до готового изделия */
+  function bakeLoss(massGrams, yieldG) {
+    if (!(massGrams > 0) || !(yieldG > 0)) return null;
+    return {
+      percent: (1 - yieldG / massGrams) * 100,
+      impossible: yieldG > massGrams
+    };
   }
 
   function ingredientsTotal(items, ingredientsById) {
@@ -50,28 +109,28 @@
   /* Работа: минуты -> часы -> рубли.
      Ставка берётся своя у этапа, если включены раздельные ставки. */
   function laborMinutes(labor) {
-    return labor.reduce(function (s, l) { return s + (Number(l.minutes) || 0); }, 0);
+    return labor.reduce(function (s, l) { return s + pos(l.minutes); }, 0);
   }
 
   function stageRate(stage, commonRate, split) {
-    if (split && stage.rate != null && stage.rate !== '') return Number(stage.rate) || 0;
-    return Number(commonRate) || 0;
+    if (split && stage.rate != null && stage.rate !== '') return pos(stage.rate);
+    return pos(commonRate);
   }
 
   function laborTotal(labor, ratePerHour, split) {
     return labor.reduce(function (s, l) {
-      return s + (Number(l.minutes) || 0) / 60 * stageRate(l, ratePerHour, split);
+      return s + pos(l.minutes) / 60 * stageRate(l, ratePerHour, split);
     }, 0);
   }
 
   /* Накладные — проценты от (ингредиенты + работа) */
   function overheadPercentTotal(overheads) {
-    return overheads.reduce(function (s, o) { return s + (Number(o.percent) || 0); }, 0);
+    return overheads.reduce(function (s, o) { return s + pos(o.percent); }, 0);
   }
 
   function overheadBreakdown(overheads, base) {
     return overheads.map(function (o) {
-      var p = Number(o.percent) || 0;
+      var p = pos(o.percent);
       return { name: o.name, percent: p, value: base * p / 100 };
     });
   }
@@ -88,21 +147,25 @@
     var ingredientsById = input.ingredientsById || {};
     var overheads = input.overheads || [];
 
-    /* Декор — необязательная часть рецепта. Выключается тумблером в заказе. */
-    var withDecor = input.withDecor !== false;
-    function live(x) { return withDecor || !x.decor; }
-
-    var items = (input.items || []).filter(live);
-    var labor = (input.labor || []).filter(live);
+    /* Позиции с признаком fixed не растут с весом заказа:
+       фигурка, топпер, коробка стоят одинаково на 1 и на 3 кг. */
+    var items = input.items || [];
+    var labor = input.labor || [];
+    function isFixed(x) { return !!x.fixed; }
+    function notFixed(x) { return !x.fixed; }
 
     /* Масштаб: во сколько раз заказ больше базового выхода рецепта.
        Ингредиенты растут всегда, работа — только если так задано. */
     var scale = Number(input.scale);
     if (!isFinite(scale) || scale <= 0) scale = 1;
     var laborScale = input.scaleLabor === false ? 1 : scale;
+    function itemScale(x) { return x.fixed ? 1 : scale; }
+    function stageScale(x) { return x.fixed ? 1 : laborScale; }
 
-    var ing = ingredientsTotal(items, ingredientsById) * scale;
-    var lab = laborTotal(labor, input.rate, input.splitRates) * laborScale;
+    var ing = ingredientsTotal(items.filter(notFixed), ingredientsById) * scale +
+              ingredientsTotal(items.filter(isFixed), ingredientsById);
+    var lab = laborTotal(labor.filter(notFixed), input.rate, input.splitRates) * laborScale +
+              laborTotal(labor.filter(isFixed), input.rate, input.splitRates);
     var base = ing + lab;
 
     var ohPct = overheadPercentTotal(overheads);
@@ -115,18 +178,32 @@
     if (margin >= 100) margin = 99;          // защита от деления на ноль
     if (margin < 0) margin = 0;
 
-    var price = cost / (1 - margin / 100);
-    var profit = price - cost;
+    /* Налог самозанятого берётся со всей полученной суммы.
+       Цена до налога даёт заданную маржу, итоговая цена поднята так,
+       чтобы после налога на руках осталось столько же. */
+    var taxRate = Number(input.taxRate) || 0;
+    if (taxRate < 0) taxRate = 0;
+    if (taxRate > 50) taxRate = 50;
+    var priceNet = cost / (1 - margin / 100);
+    var price = priceNet / (1 - taxRate / 100);
+    var tax = price - priceNet;
+    var profit = priceNet - cost;
+
+    var problems = [];
+    items.forEach(function (it) {
+      var ingr = ingredientsById[it.ingredientId];
+      if (!ingr) problems.push({ item: it, kind: 'missing' });
+      else if (!unitsMatch(it, ingr)) problems.push({ item: it, ingredient: ingr, kind: 'unit' });
+    });
 
     return {
       scale: scale,
-      withDecor: withDecor,
       lines: items.map(function (it) {
         var ingr = ingredientsById[it.ingredientId];
         return {
           item: it,
           ingredient: ingr,
-          cost: lineCost(it, ingr) * scale
+          cost: lineCost(it, ingr) * itemScale(it)
         };
       }),
       laborRows: labor.map(function (l) {
@@ -134,12 +211,12 @@
         return {
           stage: l,
           rate: r,
-          minutes: (Number(l.minutes) || 0) * laborScale,
-          cost: (Number(l.minutes) || 0) / 60 * r * laborScale
+          minutes: pos(l.minutes) * stageScale(l),
+          cost: pos(l.minutes) / 60 * r * stageScale(l)
         };
       }),
       ingredients: ing,
-      laborMinutes: laborMinutes(labor) * laborScale,
+      laborMinutes: laborMinutes(labor.filter(notFixed)) * laborScale + laborMinutes(labor.filter(isFixed)),
       labor: lab,
       base: base,
       overheadPercent: ohPct,
@@ -147,10 +224,16 @@
       overhead: oh,
       cost: cost,
       margin: margin,
+      taxRate: taxRate,
+      tax: tax,
+      priceNet: priceNet,
       price: price,
       profit: profit,
-      /* фактическая маржа от цены — должна совпасть с margin */
-      marginFact: price ? (profit / price) * 100 : 0
+      problems: problems,
+      /* фактическая маржа от цены до налога — должна совпасть с margin */
+      marginFact: priceNet ? (profit / priceNet) * 100 : 0,
+      /* наценка: на сколько процентов цена до налога выше себестоимости */
+      markup: cost ? (profit / cost) * 100 : 0
     };
   }
 
@@ -168,9 +251,9 @@
     return need / base;
   }
 
-  function hasDecor(recipeObj) {
+  function hasFixed(recipeObj) {
     var all = (recipeObj.items || []).concat(recipeObj.labor || []);
-    return all.some(function (x) { return !!x.decor; });
+    return all.some(function (x) { return !!x.fixed; });
   }
 
   /* ---------------- Аналитика отказов ---------------- */
@@ -213,21 +296,33 @@
      cash = выручка минус только продукты: ближе всего к тому,
      сколько денег реально прибавилось. */
   function orderEconomics(revenue, parts) {
-    var rev = Number(revenue) || 0;
+    /* paid — всё, что заплатил клиент. Деньги курьеру (parts.courier) проходят
+       транзитом: в выручку не входят, но налог берётся со всей суммы. */
+    var paid = Number(revenue) || 0;
+    var courier = Math.min(paid, pos(parts && parts.courier));
+    var rev = paid - courier;
     var ing = Number(parts && parts.ingredients) || 0;
     var lab = Number(parts && parts.labor) || 0;
     var ovh = Number(parts && parts.overhead) || 0;
+    var tax = paid * (Number(parts && parts.taxRate) || 0) / 100;
     var cost = ing + lab + ovh;
-    var profit = rev - cost;
+    var profit = rev - cost - tax;
     return {
+      paid: paid,
+      courier: courier,
       revenue: rev,
       ingredients: ing,
       labor: lab,
       overhead: ovh,
+      tax: tax,
       cost: cost,
       profit: profit,
       margin: rev ? (profit / rev) * 100 : 0,
-      cash: rev - ing,
+      /* сколько реально прибавилось: минус продукты и налог,
+         свой труд и расчётные накладные из кармана не уходят */
+      cash: rev - ing - tax,
+      /* заработок кондитера: ставка за работу плюс всё, что сверху */
+      earned: rev - ing - ovh - tax,
       known: !!(parts && parts.known)
     };
   }
@@ -239,8 +334,37 @@
 
   function monthLabel(key) {
     var p = String(key).split('-');
-    if (p.length < 2) return key;
-    return MONTHS_SHORT[Number(p[1]) - 1] + ' ' + p[0].slice(2);
+    var name = MONTHS_SHORT[Number(p[1]) - 1];
+    if (p.length < 2 || !name) return String(key);
+    return name + ' ' + p[0].slice(2);
+  }
+
+
+  /* Сводка месяца для главного экрана.
+     Пришло: выручка выданных заказов. Ушло: закупки (живые деньги) и налог.
+     Себестоимость выданных — отдельное число: часть закупок лежит в запасах,
+     а часть заказов сделана из купленного раньше, поэтому они не совпадают. */
+  function monthSummary(rows, purchases, key) {
+    var m = { key: key, label: monthLabel(key), orders: 0, revenue: 0, tax: 0,
+              ingredients: 0, labor: 0, overhead: 0, courier: 0, purchases: 0, purchaseCount: 0 };
+    (rows || []).forEach(function (r) {
+      if (monthKey(r.date) !== key) return;
+      m.orders += 1;
+      m.revenue += Number(r.revenue) || 0;
+      m.tax += Number(r.tax) || 0;
+      m.ingredients += Number(r.ingredients) || 0;
+      m.labor += Number(r.labor) || 0;
+      m.overhead += Number(r.overhead) || 0;
+      m.courier += Number(r.courier) || 0;
+    });
+    (purchases || []).forEach(function (p) {
+      if (monthKey(p.date) !== key) return;
+      m.purchases += Number(p.amount) || 0;
+      m.purchaseCount += 1;
+    });
+    m.cost = m.ingredients + m.labor + m.overhead;
+    m.left = m.revenue - m.purchases - m.tax;
+    return m;
   }
 
   /* rows: [{ date, revenue, ingredients, labor, overhead, known }] */
@@ -251,7 +375,7 @@
       if (!k) return;
       if (!map[k]) {
         map[k] = { key: k, label: monthLabel(k), orders: 0, withRecipe: 0,
-                   revenue: 0, ingredients: 0, labor: 0, overhead: 0 };
+                   revenue: 0, ingredients: 0, labor: 0, overhead: 0, tax: 0, minutes: 0 };
       }
       var m = map[k];
       m.orders += 1;
@@ -260,13 +384,17 @@
       m.ingredients += Number(r.ingredients) || 0;
       m.labor += Number(r.labor) || 0;
       m.overhead += Number(r.overhead) || 0;
+      m.tax += Number(r.tax) || 0;
+      m.minutes += Number(r.minutes) || 0;
     });
     return Object.keys(map).sort().map(function (k) {
       var m = map[k];
       m.cost = m.ingredients + m.labor + m.overhead;
-      m.profit = m.revenue - m.cost;
+      m.profit = m.revenue - m.cost - m.tax;
       m.margin = m.revenue ? (m.profit / m.revenue) * 100 : 0;
-      m.cash = m.revenue - m.ingredients;
+      m.cash = m.revenue - m.ingredients - m.tax;
+      m.earned = m.revenue - m.ingredients - m.overhead - m.tax;
+      m.perHour = m.minutes ? m.earned / (m.minutes / 60) : 0;
       return m;
     });
   }
@@ -386,35 +514,70 @@
     return weeks;
   }
 
+  /* Дата ГГГГ-ММ-ДД по местному времени пользователя */
+  function localISO(date) {
+    var d = date || new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
+  }
+
+  function addDays(iso, n) {
+    var p = String(iso).split('-').map(Number);
+    return new Date(Date.UTC(p[0], p[1] - 1, p[2] + n)).toISOString().slice(0, 10);
+  }
+
+  function daysBetween(fromIso, toIso) {
+    var a = String(fromIso).split('-').map(Number), b = String(toIso).split('-').map(Number);
+    return Math.round((Date.UTC(b[0], b[1] - 1, b[2]) - Date.UTC(a[0], a[1] - 1, a[2])) / 86400000);
+  }
+
+  /* Попадает ли дата в последние N дней, считая сегодняшний день целиком.
+     Будущие даты тоже попадают: заказ на следующую неделю принят в этом периоде. */
   function withinDays(iso, days, fromIso) {
-    if (!iso) return false;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) return false;
     if (!days) return true;
-    var from = fromIso ? new Date(fromIso + 'T00:00:00Z') : new Date();
-    var d = new Date(iso + 'T00:00:00Z');
-    var diff = (from - d) / 86400000;
-    return diff >= -1 && diff <= days;
+    return daysBetween(iso, fromIso || localISO()) <= days;
   }
 
   /* ---------------- Форматирование ---------------- */
   function money(v) {
-    var n = Math.round(Number(v) || 0);
-    return n.toLocaleString('ru-RU').replace(/ /g, ' ') + ' ₽';
+    var x = Number(v);
+    var n = isFinite(x) ? Math.round(x) : 0;
+    var digits = String(Math.abs(n)).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00A0');
+    return (n < 0 ? '−' : '') + digits + '\u00A0₽';
   }
 
   function moneyPrecise(v) {
-    var n = Number(v) || 0;
-    return (Math.round(n * 100) / 100).toLocaleString('ru-RU', {
-      minimumFractionDigits: 0, maximumFractionDigits: 2
-    }) + ' ₽';
+    var n = Number(v);
+    if (!isFinite(n)) n = 0;
+    var r = Math.round(n * 100) / 100;
+    var whole = Math.trunc(Math.abs(r));
+    var frac = Math.round((Math.abs(r) - whole) * 100);
+    var digits = String(whole).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00A0');
+    var f = frac ? ',' + String(frac).padStart(2, '0').replace(/0$/, '') : '';
+    return (r < 0 ? '−' : '') + digits + f + '\u00A0₽';
   }
 
   function pct(v, digits) {
     var d = digits === undefined ? 1 : digits;
-    return (Number(v) || 0).toFixed(d).replace('.', ',') + '%';
+    var n = Number(v);
+    if (!isFinite(n)) n = 0;
+    var t = n.toFixed(d);
+    if (Number(t) === 0) t = (0).toFixed(d);            // без «-0%»
+    return t.replace('.', ',').replace('-', '−') + '%';
+  }
+
+  /* plural(5, 'заказ', 'заказа', 'заказов') -> 'заказов' */
+  function plural(n, one, few, many) {
+    var a = Math.abs(Number(n) || 0) % 100, b = a % 10;
+    if (a > 10 && a < 20) return many;
+    if (b === 1) return one;
+    if (b >= 2 && b <= 4) return few;
+    return many;
   }
 
   function duration(minutes) {
-    var m = Math.round(Number(minutes) || 0);
+    var m = Math.max(0, Math.round(Number(minutes) || 0));
     var h = Math.floor(m / 60);
     var r = m % 60;
     if (h && r) return h + ' ч ' + r + ' мин';
@@ -432,10 +595,20 @@
     laborMinutes: laborMinutes,
     laborTotal: laborTotal,
     stageRate: stageRate,
+    unitsMatch: unitsMatch,
+    unitPrice: unitPrice,
+    recipeMass: recipeMass,
+    yieldGrams: yieldGrams,
+    bakeLoss: bakeLoss,
+    localISO: localISO,
+    addDays: addDays,
+    daysBetween: daysBetween,
+    plural: plural,
     recipe: recipe,
     marginFromPrice: marginFromPrice,
     scaleFactor: scaleFactor,
-    hasDecor: hasDecor,
+    hasFixed: hasFixed,
+    monthSummary: monthSummary,
     funnel: funnel,
     groupBy: groupBy,
     orderEconomics: orderEconomics,

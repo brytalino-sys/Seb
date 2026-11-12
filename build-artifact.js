@@ -14,20 +14,13 @@ const body = html
 const css = read('styles.css');
 let js = ['calc.js', 'store.js', 'app.js'].map(read).join('\n');
 
-/* В окне просмотра артефакта скачивание файлов запрещено,
-   поэтому кнопку «Сохранить файлом» убираем — остаётся копирование текста. */
-js = js.replace(
-  "'<div style=\"height:8px\"></div><button class=\"btn-ghost\" id=\"exFile\">Сохранить файлом</button>' +",
-  "'' +");
-js = js.replace(
-  /\n\s*root\.querySelector\('#exFile'\)\.addEventListener[\s\S]*?\n        \}\);/,
-  "");
+/* В окне просмотра артефакта скачивание файлов запрещено: приложение
+   прячет кнопки файла, остаётся копирование текста. */
+js = 'window.__NO_FILES = true;\n' + js;
 /* Внутри окна просмотра Telegram не бывает: загрузчик SDK не нужен */
 js = js.replace(
   /\n  if \(launchedFromTelegram\(\)\) \{[\s\S]*?\n  \}\n/,
   "\n");
-if (js.indexOf('exFile') !== -1) { console.log('  ВНИМАНИЕ: кнопка скачивания осталась в сборке'); }
-else { console.log('  кнопка скачивания исключена из однофайловой сборки'); }
 
 const out = `<title>Себес</title>
 <meta name="claude:viewport-fit-sides" content="cover">

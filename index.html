@@ -16,7 +16,7 @@
     <button class="icon-btn" id="btnBack" hidden aria-label="Назад">
       <svg viewBox="0 0 24 24" width="22" height="22"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
-    <h1 id="screenTitle">Рецепты</h1>
+    <h1 id="screenTitle">Главная</h1>
     <button class="icon-btn" id="btnTheme" aria-label="Сменить тему">
       <svg viewBox="0 0 24 24" width="20" height="20"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
@@ -29,13 +29,13 @@
   </div>
 
   <nav class="tabbar" id="tabbar">
+    <button class="tab" data-tab="home">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 11l8-7 8 7v9a1 1 0 01-1 1h-4v-6h-6v6H5a1 1 0 01-1-1v-9z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+      <span>Главная</span>
+    </button>
     <button class="tab" data-tab="recipes">
       <svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 4h12a2 2 0 012 2v14H6a2 2 0 01-2-2V4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 8h6M8 12h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
       <span>Рецепты</span>
-    </button>
-    <button class="tab" data-tab="ingredients">
-      <svg viewBox="0 0 24 24" width="22" height="22"><circle cx="8" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="16" cy="16" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="16" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="8" cy="16" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
-      <span>Ингредиенты</span>
     </button>
     <button class="tab" data-tab="orders">
       <svg viewBox="0 0 24 24" width="22" height="22"><rect x="4" y="4" width="16" height="17" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 3v3M16 3v3M8 11h8M8 15h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>

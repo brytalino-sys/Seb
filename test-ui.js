@@ -1,356 +1,477 @@
 /* Интеграционный прогон интерфейса в jsdom.
-   Проверяет, что экраны рисуются и что числа на экране совпадают с Calc. */
+   Числа на экранах сверяются с Calc, плюс проверки на баги из аудита 0.3. */
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 
 const dir = __dirname;
-const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8')
-  .replace(/<script src="https:\/\/telegram\.org[^>]*><\/script>/, '');
+const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
 
 let failed = 0;
 function ok(name, cond, extra) {
   if (!cond) failed++;
-  console.log((cond ? '  OK   ' : '  FAIL ') + name + (extra ? '  ' + extra : ''));
+  console.log((cond ? '  OK   ' : '  FAIL ') + name + (extra !== undefined ? '  ' + extra : ''));
 }
 
-const dom = new JSDOM(html, {
-  runScripts: 'outside-only',
-  url: 'https://example.com/',
-  pretendToBeVisual: true
-});
-const w = dom.window;
-w.confirm = () => true;
-w.scrollTo = () => {};
-
-for (const f of ['calc.js', 'store.js', 'app.js']) {
-  w.eval(fs.readFileSync(path.join(dir, f), 'utf8'));
+function boot(preset) {
+  const dom = new JSDOM(html, { runScripts: 'outside-only', url: 'https://example.com/', pretendToBeVisual: true });
+  const w = dom.window;
+  w.scrollTo = () => {};
+  w.confirm = () => { throw new Error('нативный confirm вызван'); };
+  if (preset) preset(w);
+  for (const f of ['calc.js', 'store.js', 'app.js']) w.eval(fs.readFileSync(path.join(dir, f), 'utf8'));
+  const doc = w.document;
+  const $ = (s) => doc.querySelector(s);
+  const $$ = (s) => Array.from(doc.querySelectorAll(s));
+  /* неразрывные пробелы не трогаем: суммы на экране должны совпадать с Calc.money буква в букву */
+  const text = () => $('#view').textContent.replace(/[ \t\n\r]+/g, ' ');
+  const sheetText = () => $('#sheetBody').textContent.replace(/[ \t\n\r]+/g, ' ');
+  const click = (el) => el.dispatchEvent(new w.Event('click', { bubbles: true }));
+  const input = (el, v) => { el.value = v; el.dispatchEvent(new w.Event('input', { bubbles: true })); };
+  const change = (el, v) => { if (v !== undefined) { if (el.type === 'checkbox') el.checked = v; else el.value = v; } el.dispatchEvent(new w.Event('change', { bubbles: true })); };
+  return { w, doc, $, $$, text, sheetText, click, input, change, Calc: w.Calc, Store: w.Store, app: w.__app };
 }
 
-const doc = w.document;
-const Calc = w.Calc, Store = w.Store, app = w.__app;
-const $ = (s) => doc.querySelector(s);
-const $$ = (s) => Array.from(doc.querySelectorAll(s));
-const text = () => $('#view').textContent.replace(/\s+/g, ' ');
+let t = boot();
+let { $, $$, text, sheetText, click, input, change, Calc, Store, app, doc } = t;
 
-console.log('\n1. Стартовый экран');
+console.log('\n0. Главная');
+ok('Старт на главной', $('#screenTitle').textContent === 'Главная');
+ok('Вкладка «Главная» подсвечена', $('[data-tab="home"]').classList.contains('active'));
+ok('Вкладки «Продукты» больше нет', !$('[data-tab="ingredients"]'));
+ok('Плашка про примеры и что это за приложение', text().includes('Сейчас здесь примеры') && text().includes('считает себестоимость'));
+{
+  const key = Calc.localISO().slice(0, 7);
+  const m = Calc.monthSummary(Store.moneyRows(), Store.purchases(), key);
+  ok('Закупки месяца на экране', text().includes(Calc.money(m.purchases)), Calc.money(m.purchases));
+  ok('«Осталось» = пришло − закупки − налог', text().includes(Calc.money(m.left)), Calc.money(m.left));
+  ok('Ближайший заказ сегодня виден', text().includes('Сегодня: 1') && $$('[data-ord]').length >= 1);
+  click($('[data-seg="prev"]'));
+  const pk = Calc.monthKey(Calc.addDays(key + '-01', -1));
+  const pm = Calc.monthSummary(Store.moneyRows(), Store.purchases(), pk);
+  ok('Прошлый месяц: пришло', pm.revenue > 0 && text().includes(Calc.money(pm.revenue)), Calc.money(pm.revenue));
+  ok('Прошлый месяц: осталось', text().includes(Calc.money(pm.left)), Calc.money(pm.left));
+  ok('Пояснение про себестоимость и закупки', text().includes('Себестоимость выданных заказов ' + Calc.money(pm.cost)));
+  click($('#homePurchases'));
+  ok('Экран закупок', $('#screenTitle').textContent === 'Закупки' && $$('[data-pur]').length >= 1);
+  click($('#mainButton'));
+  input($('#pAmount'), '1234'); input($('#pNote'), 'Тест <b>');
+  click($('#pSave'));
+  ok('Закупка записалась', Store.purchases().some((p) => p.amount === 1234 && p.note === 'Тест <b>'));
+  ok('Текст закупки экранирован', !$('#view').innerHTML.includes('Тест <b>'));
+  click($('[data-tab="home"]'));
+  ok('Нет напоминания о копии на примерах', !text().includes('Сохрани копию данных'));
+}
+
+console.log('\n1. Список рецептов');
+click($('[data-tab="recipes"]'));
 ok('Заголовок «Рецепты»', $('#screenTitle').textContent === 'Рецепты');
-ok('Отрисовано 3 рецепта', $$('[data-open]').length === 3, '(' + $$('[data-open]').length + ')');
-ok('Главная кнопка — новый расчёт', $('#mainButton').textContent.includes('Новый расчёт'));
-
-console.log('\n2. Числа на списке совпадают с Calc');
+ok('Три рецепта', $$('[data-open]').length === 3);
+ok('Ссылка «Продукты и цены»', !!$('#toProducts'));
+ok('В рецептах нет блока про сорвавшиеся заказы', !text().includes('Упущено') && !$('[data-goto="refusals"]'));
 const velvet = Store.getRecipe('r_velvet');
 const vc = Store.computeRecipe(velvet);
-ok('Себестоимость в списке', text().includes(Calc.money(vc.cost)), Calc.money(vc.cost));
-ok('Цена в списке', text().includes(Calc.money(vc.price)), Calc.money(vc.price));
-const vcNoDecor = Store.computeRecipe(velvet, { withDecor: false });
-ok('Эталон без декора: себестоимость 2 597 ₽', Math.abs(vcNoDecor.cost - 2596.99) < 0.5, Math.round(vcNoDecor.cost));
-ok('Эталон без декора: цена 5 771 ₽', Math.abs(vcNoDecor.price - 5771.09) < 0.5, Math.round(vcNoDecor.price));
-ok('С декором дороже', vc.cost > vcNoDecor.cost, Math.round(vc.cost) + ' > ' + Math.round(vcNoDecor.cost));
+ok('Себестоимость в списке = Calc', text().includes(Calc.money(vc.cost)), Calc.money(vc.cost));
+ok('Цена в списке = Calc', text().includes(Calc.money(vc.price)), Calc.money(vc.price));
+ok('У цены есть подпись', text().includes('цена за 1,1'));
+const etalon = Store.computeRecipe(Object.assign({}, velvet, { items: velvet.items.filter((i) => i.ingredientId !== 'i_berry' && i.ingredientId !== 'i_box') }), { taxRate: 0 });
+ok('Эталон без ягод, коробки и налога: 2 597 ₽', Math.abs(etalon.cost - 2596.99) < 0.01, etalon.cost.toFixed(2));
+ok('Эталон без ягод, коробки и налога: 5 771 ₽', Math.abs(etalon.price - 5771.09) < 0.01, etalon.price.toFixed(2));
+ok('Налог 4% включён по умолчанию', Math.abs(vc.price - vc.priceNet / 0.96) < 0.01);
 
-console.log('\n3. Экран расчёта');
+console.log('\n2. Экран расчёта');
 app.go('recipe', { id: 'r_velvet' });
-const t3 = text();
-ok('Заголовок экрана', $('#screenTitle').textContent === 'Расчёт себестоимости');
-ok('Есть блок накладных', t3.includes('Накладные'));
-ok('Накладные 236 ₽ показаны', t3.includes(Calc.money(vc.overhead)), Calc.money(vc.overhead));
-ok('Себестоимость = база + накладные', t3.includes(Calc.money(vc.cost)));
-ok('База показана отдельно', t3.includes(Calc.money(vc.base)), Calc.money(vc.base));
-ok('Себестоимость НЕ равна базе', Math.abs(vc.cost - vc.base) > 1);
-ok('Поле маржи на месте', !!$('#fMargin'));
+ok('Заголовок', $('#screenTitle').textContent === 'Расчёт себестоимости');
+ok('Себестоимость', text().includes(Calc.money(vc.cost)));
+ok('Цена для клиента', text().includes(Calc.money(vc.price)));
+ok('Налог отдельной строкой', text().includes('налог 4%') && text().includes(Calc.money(vc.tax)));
+ok('«Ты получишь»', text().includes(Calc.money(vc.labor + vc.profit)));
+ok('Маржа объяснена через наценку', text().includes('наценка 122%'));
+ok('Цена за кг, а не за упаковку', text().includes('180 мл × 850 ₽/л') || text().includes('180 мл × 850 ₽/л'));
+ok('Упёк показан', /упёк и потери \d/.test(text()));
 
-console.log('\n4. Пересчёт при смене маржи');
-const f = $('#fMargin');
-f.value = '40';
-f.dispatchEvent(new w.Event('input'));
-const d2 = Store.computeRecipe(Object.assign({}, velvet, { margin: 40 }));
-ok('Цена пересчиталась под 40%', text().includes(Calc.money(d2.price)), Calc.money(d2.price));
-ok('Себестоимость не изменилась', text().includes(Calc.money(vc.cost)));
+console.log('\n3. Поле маржи не теряет фокус');
+const fm = $('#fMargin');
+fm.focus();
+input(fm, '4');
+ok('После первой цифры фокус на том же поле', doc.activeElement === fm);
+input(fm, '40');
+const v40 = Store.computeRecipe(Object.assign({}, velvet, { margin: 40 }));
+ok('Итог пересчитался под 40%', $('#totalsBox').textContent.includes(Calc.money(v40.price)), Calc.money(v40.price));
+ok('Поле то же самое', $('#fMargin') === fm);
+input(fm, '');
+ok('Пустое поле не превращается в 0', fm.value === '');
+input(fm, '150');
+ok('Маржа 150 ограничена 95', /Маржа 95%/.test($('#totalsBox').textContent));
 
-console.log('\n5. Цена одинакова на всех экранах');
-app.go('recipes');
-w.__app.render();
-const listPrice = text().includes(Calc.money(vc.price));
-ok('В списке та же цена, что в расчёте', listPrice);
+console.log('\n4. Уход с несохранённым рецептом');
+click($('#btnBack'));
+ok('Спросили, сохранить ли', !$('#sheet').hidden && sheetText().includes('Сохранить изменения?'));
+click($('#lvDrop'));
+ok('Вернулись к списку', $('#screenTitle').textContent === 'Рецепты');
+app.go('recipe', { id: 'r_velvet' });
+ok('Черновик сброшен: маржа снова 55', $('#fMargin').value === '55');
 
-console.log('\n6. Ингредиенты');
-app.go('ingredients');
-ok('Заголовок', $('#screenTitle').textContent === 'Ингредиенты');
-ok('8 ингредиентов', $$('[data-ing]').length === 8, '(' + $$('[data-ing]').length + ')');
-ok('Видна дата цены', text().includes('Обновлено'));
+console.log('\n5. Выход больше закладки');
+input($('#fYield'), '2');
+ok('Предупреждение «так не бывает»', $('#totalsBox').textContent.includes('Так не бывает'));
+input($('#fYield'), '1.1');
+click($('[data-tab="recipes"]'));
+if (!$('#sheet').hidden) click($('#lvDrop'));
 
-console.log('\n7. Заказы');
-app.go('orders');
-ok('Заголовок', $('#screenTitle').textContent === 'Заказы');
-ok('4 заказа', $$('[data-ord]').length === 4, '(' + $$('[data-ord]').length + ')');
-ok('Нет блока ингредиентов на экране заказов', !text().includes('Накладные'));
-ok('Есть статусы', text().includes('В работе') || text().includes('Выдан'));
+console.log('\n6. Продукт: цена за единицу и защита единиц');
+click($('#toProducts'));
+ok('Заголовок «Продукты и цены»', $('#screenTitle').textContent === 'Продукты и цены');
+ok('Масло: цена за кг, а не за пачку', text().includes(Calc.money(210 / 180 * 1000) + '/кг'), Calc.money(210 / 180 * 1000) + '/кг');
+ok('И цена упаковки', text().includes('210 ₽ за 180 г'));
+click($('[data-ing="i_masc"]'));
+change($('#iUnit'), 'шт');
+click($('#iSave'));
+ok('Смену кг→шт у используемого продукта запретили', Store.ingredientsById().i_masc.unit === 'кг');
+ok('Себестоимость не раздулась', Math.abs(Store.computeRecipe(Store.getRecipe('r_velvet')).cost - vc.cost) < 0.01);
+change($('#iUnit'), 'г'); input($('#iAmt'), '500'); input($('#iPrice'), '650');
+click($('#iSave'));
+ok('Смена кг→г разрешена', Store.ingredientsById().i_masc.unit === 'г');
+ok('Дата цены стала сегодняшней', Store.ingredientsById().i_masc.updated === Calc.localISO());
 
-console.log('\n8. Аналитика: деньги');
-app.go('analytics');
-ok('Заголовок', $('#screenTitle').textContent === 'Аналитика');
-ok('Три раздела', $$('#anSeg [data-seg]').length === 3);
-const t8 = text();
-ok('Открывается на деньгах', t8.includes('Выручка'));
-ok('Есть прибыль', t8.includes('Прибыль'));
-ok('Есть кэш за вычетом продуктов', t8.includes('Деньги за вычетом продуктов'));
-ok('Нарисован график', !!$('.chart-wrap svg'));
-ok('Легенда из 4 рядов', $$('.legend-item').length === 4, '(' + $$('.legend-item').length + ')');
-ok('Таблица значений под графиком', !!$('.data-table'));
+console.log('\n7. Продукт прямо из рецепта');
+app.go('recipe', { id: null });
+click($('#addItem'));
+click($('#sNewIng'));
+ok('Открылась форма продукта', !!$('#iName'));
+input($('#iName'), 'Молоко 3,2%'); input($('#iPrice'), '95'); input($('#iAmt'), '1'); change($('#iUnit'), 'л');
+click($('#iSave'));
+ok('Вернулись в выбор продукта', !!$('#sIng'));
+ok('Новый продукт выбран', $('#sIng').selectedOptions[0].textContent.includes('Молоко'));
+ok('Единица подставилась мл', $('#sUnit').value === 'мл');
+input($('#sQty'), '500'); click($('#sSave'));
+ok('Молоко в рецепте', text().includes('Молоко'));
+click($('#btnBack')); click($('#lvDrop'));
 
-const moneyRows = Store.moneyRows();
-const totals = moneyRows.reduce((a, r) => {
-  a.revenue += r.revenue; a.ingredients += r.ingredients; a.labor += r.labor; a.overhead += r.overhead; return a;
-}, { revenue: 0, ingredients: 0, labor: 0, overhead: 0 });
-const profit = totals.revenue - (totals.ingredients + totals.labor + totals.overhead);
-ok('Выручка на экране совпадает с расчётом', t8.includes(Calc.money(totals.revenue)), Calc.money(totals.revenue));
-ok('Прибыль на экране совпадает', t8.includes(Calc.money(profit)), Calc.money(profit));
-ok('Кэш на экране совпадает', t8.includes(Calc.money(totals.revenue - totals.ingredients)));
-ok('Предупреждение о заказе без рецепта', t8.includes('без привязки к рецепту'));
+console.log('\n8. Заказ: сумма следует за объёмом, налог, доставка');
+click($('[data-tab="orders"]'));
+click($('#mainButton'));
+change($('#oRecipe'), 'r_velvet');
+ok('Поле объёма', !!$('#oQty'));
+ok('Подставлен выход рецепта', Number($('#oQty').value) === 1.1);
+const r1 = Store.computeRecipe(Store.getRecipe('r_velvet'));
+ok('Сумма подставилась', Number($('#oAmount').value) === Math.round(r1.price), $('#oAmount').value);
+input($('#oQty'), '2.2');
+const r2 = Store.computeRecipe(Store.getRecipe('r_velvet'), { scale: 2 });
+ok('Сумма пересчиталась при смене объёма', Number($('#oAmount').value) === Math.round(r2.price), $('#oAmount').value);
+const r3 = r2;
+ok('Переключателя декора больше нет', !$('#oDecor'));
+ok('Коробка не удвоилась при ×2', Math.abs(r2.ingredients - (r1.ingredients * 2 - 120)) < 0.01);
+const sub = () => $('#oFulfilHint').textContent;
+ok('Три способа выдачи', $$('#oFulfil [data-seg]').length === 3);
+ok('По умолчанию самовывоз', sub().includes('забирает сам') && !$('#oFee'));
+click($('#oFulfil [data-seg="delivery"]'));
+ok('Подпись доставки сменилась', sub().includes('остаётся тебе') && !!$('#oFee'));
+input($('#oFee'), '500');
+ok('Доставка прибавилась к сумме', Number($('#oAmount').value) === Math.round(r3.price) + 500);
+ok('Итого клиенту', $('#oMoney').textContent.includes(Calc.money(Math.round(r3.price) + 500)));
+change($('#oLegal'), true);
+const r4 = Store.computeRecipe(Store.getRecipe('r_velvet'), { scale: 2, taxRate: 6 });
+ok('Компания: налог 6%', Number($('#oAmount').value) === Math.round(r4.price) + 500);
+input($('#oAmount'), '3000');
+ok('Убыток подсвечен', $('#oMoney').textContent.includes('в убыток'));
+input($('#oQty'), '1.1');
+ok('После ручной суммы объём её не перезаписывает', $('#oAmount').value === '3000');
+click($('#oUseRec'));
+ok('Кнопка «Поставить рекомендуемую»', Number($('#oAmount').value) > 3000);
+$('#oTitle').value = 'Тест заказа';
+$('#oDate').value = '';
+click($('#oSave'));
+ok('Без даты не сохраняется', !Store.state.orders.some(o => o.title === 'Тест заказа'));
+$('#oDate').value = Calc.addDays(Calc.localISO(), 3);
+click($('#oSave'));
+const saved = Store.state.orders.find(o => o.title === 'Тест заказа');
+ok('Сохранён', !!saved);
+ok('С налогом для компании', saved && saved.legal === true);
+ok('С доставкой 500', saved && saved.deliveryFee === 500);
 
-console.log('\n8б. Аналитика: отказы');
-$$('#anSeg [data-seg]')[1].dispatchEvent(new w.Event('click'));
-const fn = Calc.funnel(Store.state.orders, Store.state.refusals);
-const t8b = text();
-ok('Блок «Почему не купили»', t8b.includes('Почему не купили'));
-ok('Конверсия в процентах', t8b.includes(Calc.pct(fn.conversion)), Calc.pct(fn.conversion));
-ok('Упущенная выручка в рублях', t8b.includes(Calc.money(fn.lostRevenue)), Calc.money(fn.lostRevenue));
-ok('Доли причин нарисованы', $$('.bar-row').length >= 3, '(' + $$('.bar-row').length + ' строк)');
-ok('Таблица причина-канал', t8b.includes('Причина и канал'));
-ok('Фильтр периода', $$('[data-period]').length === 3);
-$$('[data-period]')[0].dispatchEvent(new w.Event('click'));
-ok('Период переключился на 30 дней', $$('[data-period]')[0].classList.contains('active'));
-$$('[data-period]')[2].dispatchEvent(new w.Event('click'));
-ok('Вернулись на всё время', $$('[data-period]')[2].classList.contains('active'));
-
-console.log('\n8в. Аналитика: отзывы');
-$$('#anSeg [data-seg]')[2].dispatchEvent(new w.Event('click'));
-const doneOrders = Store.state.orders.filter(o => o.status === 'done');
-const rs = Calc.reviewStats(doneOrders);
-const t8v = text();
-ok('Средняя оценка показана', t8v.includes('Средняя оценка'));
-ok('Значение средней верное', t8v.includes(String(Math.round(rs.average * 100) / 100).replace('.', ',')),
-  String(Math.round(rs.average * 100) / 100));
-ok('Распределение оценок', t8v.includes('Распределение оценок'));
-ok('Оценки по рецептам', t8v.includes('Оценки по рецептам'));
-ok('Повторные клиенты', t8v.includes('Повторные клиенты'));
-ok('Тексты отзывов выведены', t8v.includes('Что пишут'));
-
-console.log('\n9. Журнал отказов');
-app.go('refusals');
-ok('Заголовок', $('#screenTitle').textContent === 'Журнал отказов');
-ok('6 записей', $$('[data-ref]').length === 6, '(' + $$('[data-ref]').length + ')');
-ok('Этап — стадия воронки, не копия причины',
-  text().includes('После озвучивания цены') || text().includes('До расчёта цены'));
-
-console.log('\n10. Пустые состояния');
-Store.clearAll();
-app.go('recipes'); w.__app.render();
-ok('Пустой экран рецептов', text().includes('Пока ни одного рецепта'));
-app.go('ingredients');
-ok('Пустой справочник', text().includes('Справочник пуст'));
-app.go('orders');
-ok('Пустые заказы', text().includes('Заказов пока нет'));
-app.go('analytics');
-analyticsTabReset();
-ok('Пустой дашборд денег', text().includes('Выполненных заказов нет'));
-$$('#anSeg [data-seg]')[2].dispatchEvent(new w.Event('click'));
-ok('Пустые отзывы', text().includes('Отзывов пока нет'));
-analyticsTabReset();
-app.go('refusals');
-ok('Пустой журнал', text().includes('Журнал пуст'));
-
-function analyticsTabReset() {
-  const segs = $$('#anSeg [data-seg]');
-  if (segs.length) segs[0].dispatchEvent(new w.Event('click'));
-}
-
-console.log('\n11. Сохранение в localStorage');
-Store.reset();
-const raw = w.localStorage.getItem('sebes.v1');
-ok('Данные записались', !!raw && JSON.parse(raw).recipes.length === 3);
-
-console.log('\n12. Тёмная тема');
-$('#btnTheme').dispatchEvent(new w.Event('click'));
-ok('Переключилась в dark', doc.documentElement.getAttribute('data-theme') === 'dark');
-$('#btnTheme').dispatchEvent(new w.Event('click'));
-ok('Вернулась в light', doc.documentElement.getAttribute('data-theme') === 'light');
-
-console.log('\n13. Масштаб и декор в заказе');
-app.go('orders'); w.__app.render();
-$('#mainButton').dispatchEvent(new w.Event('click'));
-const sel = doc.querySelector('#oRecipe');
-sel.value = 'r_velvet';
-sel.dispatchEvent(new w.Event('change'));
-ok('Появилось поле объёма', !!doc.querySelector('#oQty'));
-ok('Единица из рецепта', doc.querySelector('#oQtyUnit').value === 'кг', doc.querySelector('#oQtyUnit').value);
-ok('Подставлен базовый выход 1.5', Number(doc.querySelector('#oQty').value) === 1.5);
-ok('Тумблер декора показан', !!doc.querySelector('#oDecor'));
-const panel1 = doc.querySelector('#oCalc').textContent.replace(/\s+/g, ' ');
-ok('Множитель ×1 при базовом объёме', panel1.includes('×1'), panel1.slice(0, 60));
-ok('Цена с декором в панели', panel1.includes(Calc.money(vc.price)), Calc.money(vc.price));
-
-const qf = doc.querySelector('#oQty');
-qf.value = '3';
-qf.dispatchEvent(new w.Event('input'));
-const x2 = Store.computeRecipe(velvet, { scale: 2 });
-const panel2 = doc.querySelector('#oCalc').textContent.replace(/\s+/g, ' ');
-ok('Множитель ×2 при 3 кг', panel2.includes('×2'));
-ok('Цена удвоилась', panel2.includes(Calc.money(x2.price)), Calc.money(x2.price));
-
-const df = doc.querySelector('#oDecor');
-df.checked = false;
-df.dispatchEvent(new w.Event('change'));
-const x2nd = Store.computeRecipe(velvet, { scale: 2, withDecor: false });
-const panel3 = doc.querySelector('#oCalc').textContent.replace(/\s+/g, ' ');
-ok('Без декора цена ниже', panel3.includes(Calc.money(x2nd.price)), Calc.money(x2nd.price));
-ok('Декор реально влияет', x2nd.price < x2.price);
-
-doc.querySelector('#oTitle').value = 'Красный бархат 3 кг';
-doc.querySelector('#oAmount').value = '11000';
-doc.querySelector('#oSave').dispatchEvent(new w.Event('click'));
-const saved = Store.state.orders.filter(o => o.title === 'Красный бархат 3 кг')[0];
-ok('Заказ сохранён с объёмом', saved && saved.qty === 3, saved ? String(saved.qty) : 'нет');
-ok('Заказ сохранён без декора', saved && saved.withDecor === false);
-ok('Объём виден в списке', text().includes('3 кг'));
-
-console.log('\n14. Раздельные ставки в расчёте');
-app.go('recipe', { id: 'r_medovik' });
-ok('Тумблер ставок есть', !!doc.querySelector('#swSplit'));
-ok('Общая ставка видна', text().includes('Общая ставка'));
-const sw = doc.querySelector('#swSplit');
-sw.checked = true;
-sw.dispatchEvent(new w.Event('change'));
-ok('Строка общей ставки скрылась', !text().includes('Общая ставка'));
-ok('У этапов показана ставка', text().includes('500 ₽ / ч'));
-doc.querySelector('[data-labor="0"]').dispatchEvent(new w.Event('click'));
-ok('Поле своей ставки в шторке', !!doc.querySelector('#lRate'));
-doc.querySelector('#lRate').value = '800';
-doc.querySelector('#lSave').dispatchEvent(new w.Event('click'));
-ok('Ставка этапа сохранилась в черновик', text().includes('800 ₽ / ч'));
-
-console.log('\n15. Выход рецепта и цена за единицу');
-ok('Поле выхода есть', !!doc.querySelector('#fYield'));
-ok('Показана цена за единицу', text().includes('За 1 кг'));
-ok('Тумблер масштаба работы', !!doc.querySelector('#swScaleLabor'));
-
-console.log('\n16. Нулевые накладные свёрнуты');
-app.go('recipe', { id: 'r_cheese' });
-ok('Аренда 0% скрыта', !text().includes('Аренда'));
-ok('Есть кнопка показать нулевые', !!doc.querySelector('#showAllOh'));
-doc.querySelector('#showAllOh').dispatchEvent(new w.Event('click'));
-ok('После нажатия аренда видна', text().includes('Аренда'));
-
-console.log('\n17. Удаление без нативного confirm');
-app.go('analytics'); w.__app.render();
+console.log('\n9. «Не состоялся» из карточки заказа');
 const before = Store.state.refusals.length;
-$$('#anSeg [data-seg]')[1].dispatchEvent(new w.Event('click'));
-doc.querySelector('#toRef').dispatchEvent(new w.Event('click'));
-doc.querySelector('[data-ref]').dispatchEvent(new w.Event('click'));
-ok('Открылась карточка отказа', !doc.getElementById('sheet').hidden);
-doc.querySelector('#rDel').dispatchEvent(new w.Event('click'));
-ok('Запись удалена через свою кнопку', Store.state.refusals.length === before - 1,
-  '(' + before + ' -> ' + Store.state.refusals.length + ')');
+click($('[data-ord="' + saved.id + '"]'));
+click($('#oFail'));
+ok('Открылась форма несостоявшегося', !!$('#rReason'));
+ok('Сумма перенеслась', Number($('#rAmount').value) === saved.amount);
+click($('#rSave'));
+ok('Без причины не сохраняется', Store.state.refusals.length === before);
+change($('#rReason'), 'Дорого, не устроила цена');
+click($('#rSave'));
+ok('Запись добавлена', Store.state.refusals.length === before + 1);
+ok('Заказ убран из списка', !Store.state.orders.some(o => o.id === saved.id));
 
-console.log('\n18. Подтверждение очистки — своя шторка, не confirm()');
-w.confirm = () => { throw new Error('нативный confirm вызван'); };
-app.go('settings'); w.__app.render();
-doc.querySelector('#btnClear').dispatchEvent(new w.Event('click'));
-ok('Показана своя шторка подтверждения', !!doc.querySelector('#cYes'));
-doc.querySelector('#cYes').dispatchEvent(new w.Event('click'));
-ok('После подтверждения данные стёрты', Store.state.recipes.length === 0);
+console.log('\n10. Архив сохраняет правки формы');
+const med = Store.orders().find(o => o.title === 'Медовик 3 кг');
+click($('[data-ord="' + med.id + '"]'));
+input($('#oAmount'), '13000');
+click($('#oArch'));
+const medAfter = Store.state.orders.find(o => o.id === med.id);
+ok('Ушёл в архив', medAfter.archived === true);
+ok('Новая сумма сохранилась', medAfter.amount === 13000);
+ok('Объём не потерялся', medAfter.qty === 3);
 
-console.log('\n19. Календарь заказов');
-Store.reset();
-app.go('orders'); w.__app.render();
-ok('Два режима списка', $$('#ordSeg [data-seg]').length === 2);
-$$('#ordSeg [data-seg]')[1].dispatchEvent(new w.Event('click'));
-ok('Сетка календаря нарисована', $$('.cal-day').length >= 28, '(' + $$('.cal-day').length + ' дней)');
-ok('Заголовок месяца есть', !!$('.cal-title'));
-ok('Дни с заказами подсвечены', $$('.cal-day.has').length > 0, '(' + $$('.cal-day.has').length + ')');
-const titleBefore = $('.cal-title').textContent;
-$('#calNext').dispatchEvent(new w.Event('click'));
-ok('Переключение месяца работает', $('.cal-title').textContent !== titleBefore,
-  titleBefore + ' -> ' + $('.cal-title').textContent);
-$('#calPrev').dispatchEvent(new w.Event('click'));
-ok('Вернулись назад', $('.cal-title').textContent === titleBefore);
-const busy = $$('.cal-day.has')[0];
-busy.dispatchEvent(new w.Event('click'));
-ok('День выбран', !!$('.cal-day.sel'));
-ok('Заказы дня показаны', $$('[data-ord]').length > 0);
-$$('#ordSeg [data-seg]')[0].dispatchEvent(new w.Event('click'));
-ok('Вернулись к списку', !$('.cal-day'));
+console.log('\n11. Себестоимость выданных заказов зафиксирована');
+const sepRows = Store.moneyRows();
+const totalBefore = sepRows.reduce((a, r) => a + r.ingredients, 0);
+const choco = Store.ingredientsById().i_choco;
+Store.upsertIngredient(Object.assign({}, choco, { price: choco.price * 3 }));
+const totalAfter = Store.moneyRows().reduce((a, r) => a + r.ingredients, 0);
+ok('Подорожание шоколада не меняет прошлые месяцы', Math.abs(totalAfter - totalBefore) < 0.01);
+ok('Но меняет цену в рецепте', Store.computeRecipe(Store.getRecipe('r_velvet')).cost > vc.cost);
+Store.upsertIngredient(choco);
 
-console.log('\n20. Доставка, время и адрес');
-$('#mainButton').dispatchEvent(new w.Event('click'));
-ok('Поле времени есть', !!doc.querySelector('#oTime'));
-ok('Тумблер доставки есть', !!doc.querySelector('#oDelivery'));
-ok('Адрес скрыт при самовывозе', !doc.querySelector('#oAddress'));
-const dl = doc.querySelector('#oDelivery');
-dl.checked = true;
-dl.dispatchEvent(new w.Event('change'));
-ok('Адрес появился', !!doc.querySelector('#oAddress'));
-ok('Поле стоимости доставки', !!doc.querySelector('#oFee'));
-doc.querySelector('#oTitle').value = 'Тест доставки';
-doc.querySelector('#oAmount').value = '5000';
-doc.querySelector('#oTime').value = '18:30';
-doc.querySelector('#oAddress').value = 'Москва, Тверская 1';
-doc.querySelector('#oFee').value = '400';
-doc.querySelector('#oSave').dispatchEvent(new w.Event('click'));
-const dOrd = Store.state.orders.filter(o => o.title === 'Тест доставки')[0];
-ok('Доставка сохранена', dOrd && dOrd.fulfillment === 'delivery');
-ok('Адрес сохранён', dOrd && dOrd.address === 'Москва, Тверская 1');
-ok('Время сохранено', dOrd && dOrd.time === '18:30');
-ok('Стоимость доставки сохранена', dOrd && dOrd.deliveryFee === 400);
-ok('Адрес виден в списке', text().includes('Тверская'));
+console.log('\n12. Аналитика: деньги');
+app.go('analytics');
+ok('Деньги открываются на последнем месяце', /Заработано за [а-я]+ \d{4}/.test(text()));
+click($('[data-mm="all"]'));
+const months = Calc.monthlyRollup(Store.moneyRows());
+const earned = months.reduce((a, m) => a + m.earned, 0);
+ok('Главная цифра «Заработано»', text().includes('Заработано') && text().includes(Calc.money(earned)), Calc.money(earned));
+ok('Заработок в час', text().includes('в час'));
+ok('Налог отдельно', text().includes('Налог'));
+ok('График есть', !!$('.chart-wrap svg'));
+ok('Пять рядов в легенде', $$('.legend-item').length === 5);
+ok('График тянется по ширине', $('.chart-wrap svg').getAttribute('width') === '100%');
+ok('Предупреждение о заказе без рецепта', text().includes('без рецепта'));
+const chips = $$('[data-mm]');
+ok('Можно выбрать месяц', chips.length >= 2);
+click(chips[1]);
+ok('Выбран месяц', /Заработано за [а-я]+ \d{4}/.test(text()));
 
-console.log('\n21. Отзыв только у выданных');
-doc.querySelector('[data-ord]').dispatchEvent(new w.Event('click'));
-const st = doc.querySelector('#oStatus');
-st.value = 'new';
-st.dispatchEvent(new w.Event('change'));
-ok('У нового заказа оценки нет', !doc.querySelector('#oRate'));
-st.value = 'done';
-st.dispatchEvent(new w.Event('change'));
-ok('У выданного оценка появилась', !!doc.querySelector('#oRate'));
-doc.querySelectorAll('[data-rate]')[4].dispatchEvent(new w.Event('click'));
-ok('Пять звёзд выбраны', doc.querySelectorAll('[data-rate].on').length === 5);
-doc.querySelector('#oReview').value = 'Проверочный отзыв';
-doc.querySelector('#oSave').dispatchEvent(new w.Event('click'));
-const rated = Store.state.orders.filter(o => o.review === 'Проверочный отзыв')[0];
-ok('Отзыв сохранён', !!rated && rated.rating === 5);
-ok('Дата отзыва проставлена', !!rated.reviewDate);
 
-console.log('\n22. Архив');
-Store.reset();
-app.go('orders'); w.__app.render();
-const activeBefore = Store.orders().length;
-const archBefore = Store.archived().length;
-ok('Часть заказов уже в архиве', archBefore > 0, '(' + archBefore + ')');
-ok('Архив не мешается в списке', $$('[data-ord]').length < Store.state.orders.length);
-$('#toArchive').dispatchEvent(new w.Event('click'));
-doc.querySelector('#cYes').dispatchEvent(new w.Event('click'));
-ok('Выданные уехали в архив', Store.archived().length > archBefore,
-  archBefore + ' -> ' + Store.archived().length);
-ok('В активных их больше нет', Store.orders().every(o => o.status !== 'done'));
-$('#openArchive').dispatchEvent(new w.Event('click'));
-ok('Экран архива открылся', $('#screenTitle').textContent === 'Архив заказов');
-ok('Заказы в архиве видны', $$('[data-ord]').length === Store.archived().length);
+console.log('\n12б. Заказ: сколько получишь, группы по срокам');
+click($('[data-tab="orders"]'));
+ok('Группа «Сегодня»', text().includes('Сегодня ·'));
+ok('Кнопка «+ Не состоялся» наверху', !!$('#quickFail'));
+click($('#mainButton'));
+change($('#oRecipe'), 'r_cheese');
+ok('«Тебе на руки» в заказе', $('#oMoney').textContent.includes('Тебе на руки'));
+click($('#btnBack'));
+app.go('analytics');
 
-console.log('\n23. Архив попадает в аналитику');
-const moneyAll = Store.moneyRows();
-ok('Выполненные из архива учтены', moneyAll.length === Store.state.orders.filter(o => o.status === 'done').length,
-  '(' + moneyAll.length + ')');
-app.go('analytics'); analyticsTabReset();
-ok('Дашборд считает архивные', text().includes('выполненных заказов'));
+console.log('\n13. Аналитика: отказы');
+click($$('#anSeg [data-seg]')[1]);
+ok('Главная причина наверху', text().indexOf('Главная причина') < text().indexOf('Почему не купили'));
+const fills = $$('.bar-fill').map(b => parseFloat(b.style.width));
+ok('Полоски имеют ширину', fills.length > 0 && fills.some(v => v > 0), fills.slice(0, 4).join(','));
+ok('Каналы полными названиями', !/\bINST\b|\bTELE\b/.test(text()));
 
-console.log('\n24. Экспорт и восстановление');
-Store.reset();
-app.go('settings'); w.__app.render();
-doc.querySelector('#btnExport').dispatchEvent(new w.Event('click'));
-const exText = doc.querySelector('#exText');
-ok('Текст копии показан', !!exText && exText.value.length > 100);
-ok('Копия — валидный JSON с рецептами', JSON.parse(exText.value).recipes.length === 3);
+console.log('\n14. Аналитика: отзывы');
+click($$('#anSeg [data-seg]')[2]);
+ok('Средняя оценка', text().includes('Средняя оценка'));
+ok('Склонение «оценки»', !/\b[234] оценок\b/.test(text()));
+
+console.log('\n15. Календарь');
+click($('[data-tab="orders"]'));
+ok('Календарь сверху, список под ним', !$('#ordSeg') && $('.cal-head') && $('#ordList') && ($('.cal-head').compareDocumentPosition($('#ordList')) & 4) > 0);
+ok('Список виден вместе с календарём', $$('#view [data-ord]').length >= 1 && $$('[data-ost]').length > 1);
+ok('Сегодня есть заказ', !!$('.cal-day.today.has'));
+{
+  const iso = Calc.localISO();
+  ok('Под сегодняшним днём точка заказа', $$('.cal-day.today .cal-dot').length === 1);
+  click($('.cal-day.today'));
+  ok('Тап по дню открывает окно дня', !$('#sheet').hidden && sheetText().includes('Сегодня, '));
+  ok('В окне подпись, чей заказ', sheetText().includes('Красный бархат') && sheetText().includes('Красный бархат · Марина') && sheetText().includes('Сегодня 1 заказ на'));
+  ok('Заказ открывается из окна дня', (() => { click($('#sheetBody [data-ord]')); return !!$('#oTitle') && $('#oTitle').value === 'Красный бархат'; })());
+  click($('#btnBack'));
+  Store.upsertOrder({ title: 'Второй', client: 'Оля', amount: 1000, date: iso, time: '09:00', status: 'done' });
+  Store.upsertOrder({ title: 'Третий', amount: 2000, date: iso, status: 'new' });
+  app.render();
+  ok('Три заказа – три точки, выданный бледный', $$('.cal-day.today .cal-dot').length === 3 && $$('.cal-day.today .cal-dot.done').length === 1);
+  click($('.cal-day.today'));
+  ok('Сводка дня', sheetText().includes('Сегодня 3 заказа на') && sheetText().includes('осталось выдать 2'));
+  const lines = $$('#sheetBody .day-line').map((x) => x.textContent);
+  ok('Заказы по времени, без времени в конце', lines[0].startsWith('09:00') && lines[2].startsWith('время не указано'), lines.join(' | '));
+  click($('#btnBack'));
+  const empty = $$('.cal-day:not(.has):not(.out)')[0];
+  click(empty);
+  ok('Пустой день: «заказов нет»', sheetText().includes('заказов нет') && !!$('#dayAdd'));
+  click($('#dayAdd'));
+  ok('Новый заказ с датой выбранного дня', $('#oDate').value === empty.dataset.day);
+  click($('#btnBack'));
+}
+const out = $('.cal-day.out');
+if (out) { const iso = out.dataset.day; click(out); ok('Тап по дню соседнего месяца переключает месяц', $('.cal-day.sel') && $('.cal-day.sel').dataset.day === iso && !$('.cal-day.sel').classList.contains('out')); click($('#btnBack')); }
+
+console.log('\n16. Шторка и главная кнопка');
+click($('#mainButton'));
+ok('Шторка открыта', !$('#sheet').hidden);
+const sheetsBefore = $('#sheetBody').innerHTML;
+click($('#mainButton'));
+ok('Главная кнопка не действует при открытой шторке', $('#sheetBody').innerHTML === sheetsBefore);
+$('#sheetBody').scrollTop = 500;
+click($('#btnBack'));
+ok('«Назад» закрывает шторку', $('#sheet').hidden);
+
+console.log('\n17. Пустые состояния');
+Store.clearAll(); app.render();
+click($('[data-tab="recipes"]'));
+ok('Рецепты', text().includes('Пока ни одного рецепта'));
+ok('Плашки примеров нет', !text().includes('Сейчас здесь примеры'));
+app.go('ingredients'); ok('Продукты', text().includes('Справочник пуст'));
+click($('[data-tab="home"]')); ok('Главная пустая не падает', text().includes('Заказов в работе нет') && text().includes('пока не записаны'));
+click($('[data-tab="orders"]')); ok('Заказы', text().includes('Заказов пока нет'));
+click($('[data-tab="analytics"]')); click($$('#anSeg [data-seg]')[0]); ok('Деньги', text().includes('Выданных заказов нет'));
+app.go('refusals'); ok('Не состоялись', text().includes('Пока пусто'));
+
+console.log('\n18. Импорт: очистка и защита от чужого кода');
+Store.reset(); app.render();
+const evil = JSON.stringify({
+  version: 1,
+  ingredients: [{ id: 'x"><img id=pwn1 src=x>', name: 'Мука', price: 70, amount: '1<img id=pwn2>', unit: 'кг' },
+                { id: 'bad', name: 'Странное', price: 1, amount: 1, unit: 'kg' }],
+  recipes: [{ id: 'r1', name: 'Торт', items: [{ ingredientId: 'x', qty: 1, unit: 'кг' }] }],
+  orders: [{ id: 'o1"><img id=pwn3>', title: 'Заказ', amount: 100, date: '<img id=pwn4 src=x>', status: 'done' }],
+  refusals: []
+});
+let res = Store.importJSON(evil);
+ok('Импорт принят', res.ok);
+ok('Продукт с неизвестной единицей отброшен', Store.state.ingredients.length === 1);
+ok('Рецепт без труда не ломает приложение', Array.isArray(Store.state.recipes[0].labor));
+for (const tab of ['home', 'recipes', 'orders', 'analytics']) { click($('[data-tab="' + tab + '"]')); }
+app.go('ingredients');
+click($('[data-tab="analytics"]'));
+click($$('#anSeg [data-seg]')[2]);
+ok('Чужой код не попал на страницу', !doc.querySelector('[id^="pwn"]'));
+ok('Неполная копия отклонена', Store.importJSON('{"version":1}').ok === false);
+ok('Чужая версия отклонена', Store.importJSON('{"version":2,"recipes":[]}').ok === false);
+ok('Битый текст отклонён', Store.importJSON('{oops').ok === false);
+
+console.log('\n19. Нечитаемые сохранённые данные не затираются');
+t = boot((w) => { w.localStorage.setItem('sebes.v1', '{"version":2,"recipes":[{"name":"Мой торт"}]}'); });
+const keys = Object.keys(t.w.localStorage).filter(k => k.indexOf('sebes.backup.') === 0);
+ok('Копия отложена', keys.length === 1);
+ok('В копии данные пользователя', keys.length && t.w.localStorage.getItem(keys[0]).includes('Мой торт'));
+ok('Пользователь предупреждён', !t.$('#toast').hidden && t.$('#toast').textContent.includes('не удалось прочитать'));
+
+console.log('\n20. Ошибка сохранения не выдаётся за успех');
+t = boot();
+t.Store.state;
+const realSet = t.w.localStorage.setItem.bind(t.w.localStorage);
+t.w.Storage.prototype.setItem = function () { const e = new Error('quota'); e.name = 'QuotaExceededError'; throw e; };
+t.click(t.$('[data-tab="orders"]'));
+t.click(t.$('#mainButton'));
+t.$('#oTitle').value = 'Не влезет';
+t.click(t.$('#oSave'));
+ok('Показана ошибка, а не «Сохранено»', t.$('#toast').textContent.includes('Не сохранилось'));
+
+console.log('\n21. Дата по местному времени');
+ok('localISO даёт местную дату', t.Calc.localISO(new t.w.Date(2026, 10, 1, 1, 30)) === '2026-11-01');
+
+console.log('\n22. Экспорт');
+t = boot();
+t.app.go('settings');
+t.click(t.$('#btnExport'));
+ok('Текст копии', JSON.parse(t.$('#exText').value).recipes.length === 3);
+ok('Настройки налога на экране', !!t.$('#setTax'));
+
+
+console.log('\n23. Флаг «не растёт с весом» в рецепте');
+t = boot();
+t.app.go('recipe', { id: 'r_velvet' });
+ok('Коробка помечена', t.text().includes('Коробка для торта') && t.text().includes('на любой вес'));
+t.click(t.$('[data-item="0"]'));
+ok('Переключатель в шторке продукта', !!t.$('#sFixed') && !t.$('#sDecor'));
+ok('Ссылка «Изменить цену продукта»', !!t.$('#sEditIng'));
+t.click(t.$('#sEditIng'));
+ok('Открылась карточка продукта', !!t.$('#iPrice'));
+t.input(t.$('#iPrice'), '1000');
+t.click(t.$('#iSave'));
+ok('Вернулись в продукт рецепта', !!t.$('#sQty') && t.$('#sQty').value === '180');
+ok('Цена сливок обновилась в справочнике', t.Store.ingredientsById().i_cream.price === 1000);
+t.change(t.$('#sFixed'), true); t.click(t.$('#sSave'));
+ok('Флаг сохранился в черновике', t.text().split('на любой вес').length >= 3);
+
+console.log('\n24. Нейтральные обращения');
+const all = fs.readFileSync(path.join(dir, 'app.js'), 'utf8') + fs.readFileSync(path.join(dir, 'store.js'), 'utf8');
+ok('Нет «заработала», «готова», «смогла»', !/заработала|будешь готова|не смогла|Сама отказалась/.test(all.replace(/OLD_REASON = \{[\s\S]*?\};/, '')));
+t = boot((w) => w.localStorage.setItem('sebes.v1', JSON.stringify({ version: 1, refusals: [{ id: 'f1', reason: 'Сама отказалась, невыгодно', date: '2026-10-01' }] })));
+ok('Старая причина переведена', t.Store.state.refusals[0].reason === 'Отказ с моей стороны, невыгодно');
+
+console.log('\n25. Защита данных');
+const own = JSON.stringify({ version: 1, settings: { demo: false }, recipes: [{ id: 'r1', name: 'Мой торт' }],
+  orders: [{ id: 'o1', title: 'А', amount: 100 }, { id: 'o2', title: 'Б', amount: 200 }] });
+t = boot((w) => w.localStorage.setItem('sebes.v1', own));
+const autos = Object.keys(t.w.localStorage).filter((k) => k.indexOf('sebes.auto.') === 0);
+ok('Автокопия сделана при запуске', autos.length === 1 && t.w.localStorage.getItem(autos[0]).includes('Мой торт'));
+ok('Напоминание о копии на главной', t.text().includes('Сохрани копию данных') && t.text().includes('Копии ещё не было'));
+t.click(t.$('#homeBackup'));
+t.click(t.$('#exCopy'));
+ok('После копии дата записана', t.Store.state.settings.lastExport === t.Calc.localISO());
+t.app.render();
+ok('Напоминание пропало', !t.text().includes('Сохрани копию данных'));
+t.app.go('settings');
+ok('Автокопия в настройках', t.$$('[data-snap]').length === 1);
+t.Store.state.recipes[0].name = 'Испорчено'; t.Store.save();
+t.click(t.$('[data-snap]'));
+t.click(t.$('#cYes'));
+ok('Данные вернулись из автокопии', t.Store.state.recipes[0].name === 'Мой торт', t.Store.state.recipes[0].name);
+t = boot((w) => { for (let i = 1; i <= 7; i++) w.localStorage.setItem('sebes.auto.2026-10-0' + i, own); w.localStorage.setItem('sebes.v1', own); });
+ok('Хранятся только 5 автокопий', Object.keys(t.w.localStorage).filter((k) => k.indexOf('sebes.auto.') === 0).length === 5);
+ok('Импорт сохраняет закупки', (() => { const r = t.Store.importJSON(JSON.stringify({ version: 1, purchases: [{ amount: 500, note: 'x', date: '2026-11-01' }, { amount: -3 }] })); return r.ok && t.Store.purchases().length === 1; })());
+
+console.log('\n26. Проверка калькулятора 0.5.1');
+t = boot();
+t.app.go('recipe', { id: 'r_velvet' });
+ok('Коробка не просит массу 1 шт', !t.text().includes('Без учёта'));
+{
+  const S = t.Store, C = t.Calc;
+  const o = S.upsertOrder({ title: 'Замороженный', recipeId: 'r_velvet', qty: 2.2, amount: 9000, status: 'done', date: C.localISO() });
+  const before = JSON.stringify(S.orders().find((x) => x.id === o.id).snapshot);
+  const cream = Object.assign({}, S.ingredientsById().i_cream, { price: 5000 });
+  S.upsertIngredient(cream);
+  const e1 = Object.assign({}, S.orders().find((x) => x.id === o.id), { rating: 5, qty: '2.2' });
+  S.upsertOrder(e1);
+  ok('Отзыв не пересчитывает замороженную себестоимость', JSON.stringify(S.orders().find((x) => x.id === o.id).snapshot) === before);
+  const e2 = Object.assign({}, S.orders().find((x) => x.id === o.id), { legal: true });
+  S.upsertOrder(e2);
+  const sn = S.orders().find((x) => x.id === o.id).snapshot;
+  ok('Смена плательщика меняет только налог', sn.taxRate === 6 && sn.ingredients === JSON.parse(before).ingredients);
+  S.removeRecipe('r_velvet');
+  S.upsertOrder(Object.assign({}, S.orders().find((x) => x.id === o.id), { legal: false, amount: 9500 }));
+  const sn2 = S.orders().find((x) => x.id === o.id).snapshot;
+  ok('Удалённый рецепт не стирает себестоимость выданного заказа', !!sn2 && sn2.taxRate === 4);
+}
+t = boot();
+t.click(t.$('[data-tab="orders"]')); t.click(t.$('#mainButton'));
+t.change(t.$('#oRecipe'), 'r_velvet');
+{
+  const c = t.Store.computeRecipe(t.Store.getRecipe('r_velvet'));
+  const amount = Math.round(c.price) + 500;
+  const M = t.Calc.money, money = () => t.$('#oMoney').textContent;
+  const pickupHands = c.labor + Math.round(c.price) * 0.96 - c.cost;
+  ok('Самовывоз: на руки', money().includes(M(pickupHands)), M(pickupHands));
+
+  t.click(t.$('#oFulfil [data-seg="courier"]')); t.input(t.$('#oFee'), '500');
+  const courierHands = c.labor + amount - 500 - amount * 0.04 - c.cost;
+  ok('Курьер: сумма клиенту выросла на 500', Number(t.$('#oAmount').value) === amount);
+  ok('Курьер: 500 в заработок не входят, налог со всей суммы', money().includes(M(courierHands)), M(courierHands));
+  ok('Курьер: названо, сколько уйдёт курьеру', money().includes(M(500) + ' курьеру') && money().includes('после налога ' + M(amount * 0.04)));
+
+  t.click(t.$('#oFulfil [data-seg="delivery"]'));
+  ok('Сумма доставки сохранилась при переключении', t.$('#oFee').value === '500');
+  const selfHands = c.labor + amount - amount * 0.04 - c.cost;
+  ok('Везу сам: 500 входят в заработок', money().includes(M(selfHands)) && money().includes('за доставку ' + M(500)), M(selfHands));
+  ok('Везу сам на 500 больше, чем курьер', Math.abs(selfHands - courierHands - 500) < 0.01);
+
+  t.click(t.$('#oFulfil [data-seg="courier"]'));
+  t.$('#oTitle').value = 'Курьером'; t.$('#oStatus') && t.change(t.$('#oStatus'), 'done');
+  t.click(t.$('#oSave'));
+  const so = t.Store.orders().find((x) => x.title === 'Курьером');
+  ok('Способ «курьер» сохранён', so && so.fulfillment === 'courier' && so.deliveryFee === 500);
+  const e = t.Store.orderEconomics(so);
+  ok('Аналитика: выручка без денег курьеру', e.revenue === amount - 500 && e.courier === 500);
+  ok('Аналитика: налог со всей суммы', Math.abs(e.tax - amount * 0.04) < 0.01);
+  ok('Аналитика и окно заказа сходятся', Math.abs(e.earned - courierHands) < 0.01, t.Calc.money(e.earned));
+  const so2 = Object.assign({}, so, { id: undefined, title: 'Сам', fulfillment: 'delivery' }); delete so2.id; delete so2.snapshot;
+  t.Store.upsertOrder(so2);
+  const e2 = t.Store.orderEconomics(t.Store.orders().find((x) => x.title === 'Сам'));
+  ok('Везу сам: в аналитике заработок на 500 больше', Math.abs(e2.earned - e.earned - 500) < 0.01);
+  ok('Копия с неизвестным способом → самовывоз', (() => { const r = t.Store.importJSON(JSON.stringify({ version: 1, orders: [{ id: 'o1', title: 'x', amount: 1, fulfillment: '<b>' }, { id: 'o2', title: 'y', amount: 1, fulfillment: 'courier' }] })); return r.ok && t.Store.orders()[0].fulfillment === 'pickup' && t.Store.orders()[1].fulfillment === 'courier'; })());
+}
 
 console.log(failed === 0 ? '\nВсе проверки интерфейса пройдены.\n' : '\n' + failed + ' проверок провалено.\n');
 process.exit(failed === 0 ? 0 : 1);

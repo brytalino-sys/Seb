@@ -94,23 +94,44 @@ eq('Множитель 3 кг от выхода 1,5 кг', Calc.scaleFactor(3, 1
 eq('Множитель 24 шт от 12 шт',        Calc.scaleFactor(24, 12), 2);
 eq('Нулевой выход не ломает',         Calc.scaleFactor(3, 0), 1);
 
-console.log('\nДекор как отключаемая часть');
-const withDecor = {
+console.log('\nПозиции «не растёт с весом»');
+ingredientsById.i_box = { id: 'i_box', name: 'Коробка', price: 1200, amount: 10, unit: 'шт' };
+const withFixed = {
   ingredientsById,
-  items: input.items.concat([{ ingredientId: 'i_berry', qty: 150, unit: 'г', decor: true }]),
-  labor: input.labor.concat([{ name: 'Декор', minutes: 30, decor: true }]),
+  items: input.items.concat([{ ingredientId: 'i_box', qty: 1, unit: 'шт', fixed: true }]),
+  labor: input.labor.concat([{ name: 'Надпись', minutes: 12, fixed: true }]),
   rate: 500, overheads: input.overheads, margin: 55
 };
-ingredientsById.i_berry = { id: 'i_berry', name: 'Клубника', price: 650, amount: 1, unit: 'кг' };
-const on  = Calc.recipe(withDecor);
-const off = Calc.recipe(Object.assign({}, withDecor, { withDecor: false }));
-eq('С декором: ингредиенты', on.ingredients, 985.9 + 97.5);
-eq('С декором: работа',      on.labor,       1375 + 250);
-eq('Без декора: ингредиенты', off.ingredients, 985.9);
-eq('Без декора: работа',      off.labor,       1375);
-eq('Без декора себестоимость = эталон', off.cost, 2596.99);
-ok_true('Декор найден в рецепте', Calc.hasDecor(withDecor));
-ok_true('В эталоне декора нет', !Calc.hasDecor({ items: input.items, labor: input.labor }));
+const f1 = Calc.recipe(withFixed);
+const f2 = Calc.recipe(Object.assign({}, withFixed, { scale: 2 }));
+eq('×1: ингредиенты = эталон + коробка', f1.ingredients, 985.9 + 120);
+eq('×1: работа = эталон + надпись',     f1.labor, 1375 + 100);
+eq('×2: коробка не удваивается',        f2.ingredients, 985.9 * 2 + 120);
+eq('×2: надпись не удваивается',        f2.labor, 1375 * 2 + 100);
+eq('×2: минуты работы',                 f2.laborMinutes, 165 * 2 + 12);
+eq('×2: строка коробки',                f2.lines[f2.lines.length - 1].cost, 120);
+eq('×2: строка этапа «Надпись»',        f2.laborRows[f2.laborRows.length - 1].cost, 100);
+const f3 = Calc.recipe(Object.assign({}, withFixed, { scale: 2, scaleLabor: false }));
+eq('Работа без масштаба: всё по одному разу', f3.labor, 1375 + 100);
+ok_true('Фиксированная позиция найдена', Calc.hasFixed(withFixed));
+ok_true('В эталоне фиксированных нет', !Calc.hasFixed({ items: input.items, labor: input.labor }));
+ok_true('Старый флаг decor больше ничего не выключает',
+  Math.abs(Calc.recipe(Object.assign({}, input, { withDecor: false })).cost - 2596.99) < 0.01);
+
+console.log('\nСводка месяца для главной');
+const ms = Calc.monthSummary(
+  [{ date: '2026-11-03', revenue: 7000, ingredients: 1000, labor: 1500, overhead: 250, tax: 280 },
+   { date: '2026-11-20', revenue: 5000, ingredients: 800, labor: 1200, overhead: 200, tax: 200 },
+   { date: '2026-10-30', revenue: 9999, ingredients: 1, labor: 1, overhead: 1, tax: 1 }],
+  [{ date: '2026-11-01', amount: 3000 }, { date: '2026-11-15', amount: 1500 }, { date: '2026-10-31', amount: 777 }],
+  '2026-11');
+eq('Пришло', ms.revenue, 12000);
+eq('Закупки', ms.purchases, 4500);
+eq('Налог', ms.tax, 480);
+eq('Осталось = пришло − закупки − налог', ms.left, 12000 - 4500 - 480);
+eq('Себестоимость выданных отдельно', ms.cost, 1800 + 2700 + 450);
+eq('Заказов в месяце', ms.orders, 2);
+eq('Пустой месяц', Calc.monthSummary([], [], '2026-12').left, 0);
 
 console.log('\nРаздельные ставки по этапам');
 const split = Calc.recipe(Object.assign({}, input, {
@@ -238,6 +259,100 @@ eq('В октябре 31 день', allDays, 31);
 
 const feb = Calc.monthGrid(2028, 1);            // високосный февраль
 eq('В феврале 2028 — 29 дней', feb.flat().filter(d => d.inMonth).length, 29);
+
+
+console.log('\nНалог самозанятого в цене');
+const t4 = Calc.recipe(Object.assign({}, input, { taxRate: 4 }));
+eq('Себестоимость не меняется', t4.cost, 2596.99);
+eq('Цена до налога как раньше', t4.priceNet, 5771.09);
+eq('Цена с НПД 4%', t4.price, 5771.09 / 0.96);
+eq('Налог = 4% от итоговой цены', t4.tax, t4.price * 0.04);
+eq('На руках столько же, сколько без налога', t4.price - t4.tax, 5771.09);
+eq('Маржа сохранилась', t4.marginFact, 55);
+eq('Наценка при марже 55%', t4.markup, 122.22, 0.01);
+const t6 = Calc.recipe(Object.assign({}, input, { taxRate: 6 }));
+eq('Цена с 6% для юрлиц', t6.price, 5771.09 / 0.94);
+
+const oeTax = Calc.orderEconomics(6000, { ingredients: 1000, labor: 1500, overhead: 200, taxRate: 4, known: true });
+eq('Налог с заказа', oeTax.tax, 240);
+eq('Прибыль за вычетом налога', oeTax.profit, 6000 - 2700 - 240);
+eq('Реально прибавилось', oeTax.cash, 6000 - 1000 - 240);
+eq('Заработок кондитера', oeTax.earned, 6000 - 1000 - 200 - 240);
+
+console.log('\nЕдиницы');
+const masc = { id: 'm', name: 'Маскарпоне', price: 1290, amount: 1, unit: 'шт' };
+eq('Граммы у штучного ингредиента дают 0, а не 645 000', Calc.lineCost({ ingredientId: 'm', qty: 500, unit: 'г' }, masc), 0);
+const bad = Calc.recipe({ ingredientsById: { m: masc }, items: [{ ingredientId: 'm', qty: 500, unit: 'г' }], labor: [], overheads: [], rate: 0, margin: 0 });
+eq('Проблема единиц попала в список', bad.problems.length, 1);
+ok_true('Тип проблемы — единицы', bad.problems[0].kind === 'unit');
+const butter = { price: 210, amount: 180, unit: 'г' };
+eq('Масло 180 г за 210 ₽ — это 1 166,67 ₽/кг', Calc.unitPrice(butter).value, 1166.67, 0.01);
+ok_true('Единица цены — кг', Calc.unitPrice(butter).unit === 'кг');
+const eggs = { price: 130, amount: 10, unit: 'шт' };
+eq('Яйца 10 шт за 130 ₽ — это 13 ₽/шт', Calc.unitPrice(eggs).value, 13);
+
+console.log('\nУпёк по весу готового изделия');
+const mass = Calc.recipeMass(input.items, ingredientsById);
+eq('Закладка «Красного бархата», г', mass.grams, 1050);
+const loss = Calc.bakeLoss(mass.grams, Calc.yieldGrams(0.95, 'кг'));
+eq('Упёк при выходе 950 г, %', loss.percent, 9.52, 0.01);
+ok_true('Выход 950 г возможен', !loss.impossible);
+ok_true('Выход 1,5 кг из 1 050 г невозможен', Calc.bakeLoss(1050, 1500).impossible);
+const withEggs = Calc.recipeMass([{ ingredientId: 'e', qty: 4, unit: 'шт' }], { e: { name: 'Яйца', unit: 'шт', pieceMass: 55 } });
+eq('Яйца по 55 г входят в закладку', withEggs.grams, 220);
+const noMass = Calc.recipeMass([{ ingredientId: 'e', qty: 4, unit: 'шт' }], { e: { name: 'Яйца', unit: 'шт' } });
+ok_true('Штуки без массы помечены', noMass.unknown[0] === 'Яйца');
+ok_true('Выход в штуках не проверяется', Calc.bakeLoss(1050, Calc.yieldGrams(12, 'шт')) === null);
+
+console.log('\nДаты и форматирование');
+ok_true('Местная дата 1 ноября в 01:30', Calc.localISO(new Date(2026, 10, 1, 1, 30)) === '2026-11-01');
+ok_true('Ровно 30 дней назад входит в 30 дней', Calc.withinDays('2026-10-02', 30, '2026-11-01'));
+ok_true('31 день назад не входит', !Calc.withinDays('2026-10-01', 30, '2026-11-01'));
+ok_true('Будущий заказ входит в период', Calc.withinDays('2026-11-08', 30, '2026-11-01'));
+ok_true('Пустая дата не входит', !Calc.withinDays('', 30, '2026-11-01'));
+ok_true('Суммы на неразрывных пробелах', Calc.money(1250000) === '1 250 000 ₽');
+ok_true('Склонение: 1 заказ', Calc.plural(1, 'заказ', 'заказа', 'заказов') === 'заказ');
+ok_true('Склонение: 3 заказа', Calc.plural(3, 'заказ', 'заказа', 'заказов') === 'заказа');
+ok_true('Склонение: 11 заказов', Calc.plural(11, 'заказ', 'заказа', 'заказов') === 'заказов');
+
+console.log('\nЗащита от мусора на входе (проверка 0.5.1)');
+{
+  const by = { a: { id: 'a', name: 'A', price: 100, amount: 1, unit: 'кг' },
+               box: { id: 'box', name: 'Коробка', price: 120, amount: 1, unit: 'шт' } };
+  const bad = Calc.recipe({ ingredientsById: by,
+    items: [{ ingredientId: 'a', qty: 500, unit: 'г' }, { ingredientId: 'a', qty: -5, unit: 'кг' }],
+    labor: [{ minutes: 'abc' }, { minutes: -60 }], rate: 500, overheads: [{ percent: -50 }], margin: 50 });
+  eq('Отрицательное количество не вычитается из суммы', bad.ingredients, 50);
+  eq('Отрицательные минуты не уменьшают работу', bad.labor, 0);
+  eq('Отрицательные накладные не уменьшают себестоимость', bad.cost, 50);
+  ok_true('Неизвестные единицы не считаются совпавшими', !Calc.unitsMatch({ unit: 'x' }, { unit: 'y' }));
+  const mass = Calc.recipeMass([{ ingredientId: 'a', qty: 500, unit: 'г' }, { ingredientId: 'box', qty: 1, unit: 'шт', fixed: true }], by);
+  eq('Коробка не входит в массу закладки', mass.grams, 500);
+  ok_true('И не просит массу одной штуки', mass.unknown.length === 0);
+  ok_true('pct без «-0%»', Calc.pct(-0.04, 0) === '0%' && Calc.pct(Infinity) === '0,0%');
+  ok_true('Минус в процентах типографский', Calc.pct(-12.5) === '−12,5%');
+  ok_true('duration не уходит в минус', Calc.duration(-30) === '0 мин');
+  ok_true('monthLabel без undefined', Calc.monthLabel('2026-13') === '2026-13');
+}
+
+console.log('\nТри способа выдачи заказа');
+{
+  const parts = { ingredients: 1000, labor: 1500, overhead: 250, taxRate: 4 };
+  const pick = Calc.orderEconomics(7000, parts);
+  const self = Calc.orderEconomics(7500, parts);
+  const cour = Calc.orderEconomics(7500, Object.assign({ courier: 500 }, parts));
+  eq('Самовывоз: заработано', pick.earned, 7000 - 1000 - 250 - 280);
+  eq('Везу сам: плата за доставку в заработке', self.earned, 7500 - 1000 - 250 - 300);
+  eq('Курьер: выручка без транзита', cour.revenue, 7000);
+  eq('Курьер: клиент заплатил', cour.paid, 7500);
+  eq('Курьер: налог со всей суммы', cour.tax, 300);
+  eq('Курьер: заработано', cour.earned, 7000 - 1000 - 250 - 300);
+  eq('Курьер: части складываются в выручку', cour.ingredients + cour.labor + cour.overhead + cour.tax + cour.profit, cour.revenue);
+  eq('Курьер дороже суммы заказа не уводит выручку в минус', Calc.orderEconomics(300, { courier: 500 }).revenue, 0);
+  const ms2 = Calc.monthSummary([{ date: '2026-11-03', revenue: 7000, tax: 300, courier: 500 }], [], '2026-11');
+  eq('Сводка месяца: курьерам', ms2.courier, 500);
+  eq('Сводка месяца: осталось без денег курьера', ms2.left, 6700);
+}
 
 console.log(failed === 0
   ? '\nВсе проверки пройдены.\n'

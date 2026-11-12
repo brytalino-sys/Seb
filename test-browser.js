@@ -41,7 +41,7 @@ const srv = http.createServer((q, r) => {
     ok('Нет стрелки «назад» на главной', st.back === 'none', st.back);
     if (opts.expectTg) {
       ok('Режим Telegram включён', st.tg);
-      ok('Таббар спрятан (навигация Telegram)', st.tabbar === 'none');
+      ok('Вкладки видны и в Telegram', st.tabbar !== 'none');
       ok('SDK запрошен', sdkRequested);
       const mb = await p.evaluate(() => window.Telegram.WebApp.MainButton.t);
       ok('Нативная кнопка Telegram получила текст', !!mb, mb);
@@ -51,6 +51,8 @@ const srv = http.createServer((q, r) => {
       ok('SDK Telegram даже не запрашивался', !sdkRequested);
     }
 
+    ok('Старт на главной', (await p.textContent('#screenTitle')) === 'Главная');
+    await p.click('.tab[data-tab="recipes"]'); await p.waitForTimeout(150);
     await p.click('[data-open]');
     await p.waitForTimeout(200);
     ok('Открылся расчёт по клику', (await p.textContent('#screenTitle')) === 'Расчёт себестоимости');
@@ -58,17 +60,22 @@ const srv = http.createServer((q, r) => {
       await p.click('#btnBack');
       await p.waitForTimeout(200);
       ok('Назад работает', (await p.textContent('#screenTitle')) === 'Рецепты');
-      for (const [tab, title] of [['ingredients','Ингредиенты'],['orders','Заказы'],['analytics','Аналитика'],['recipes','Рецепты']]) {
+      for (const [tab, title] of [['home','Главная'],['orders','Заказы'],['analytics','Аналитика'],['recipes','Рецепты']]) {
         await p.click('.tab[data-tab="' + tab + '"]'); await p.waitForTimeout(150);
         ok('Вкладка ' + title, (await p.textContent('#screenTitle')) === title);
       }
-      await p.click('.tab[data-tab="ingredients"]'); await p.waitForTimeout(150);
+      await p.click('#toProducts'); await p.waitForTimeout(150);
+      ok('Продукты из рецептов', (await p.textContent('#screenTitle')) === 'Продукты и цены');
       await p.click('[data-ing]'); await p.waitForTimeout(200);
       ok('Шторка открылась', await p.isVisible('#sheet'));
       await p.mouse.click(viewport.width / 2, 20); await p.waitForTimeout(200);
       ok('Шторка закрылась по фону', !(await p.isVisible('#sheet')));
       await p.click('.tab[data-tab="recipes"]'); await p.waitForTimeout(150);
       ok('После закрытия шторки клики снова работают', (await p.textContent('#screenTitle')) === 'Рецепты');
+      await p.click('.tab[data-tab="home"]'); await p.waitForTimeout(150);
+      const ov = await p.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      ok('Главная без горизонтальной прокрутки', ov <= 1, ov + ' px');
+      if (opts.shot) await p.screenshot({ path: path.join(shots, 'home-' + opts.shot), fullPage: true });
     }
     ok('Нет ошибок JS', !errors.length, errors.join(' | '));
     if (opts.shot) await p.screenshot({ path: path.join(shots, opts.shot) });

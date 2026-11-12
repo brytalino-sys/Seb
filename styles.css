@@ -16,12 +16,16 @@
   --c-lab:     #2F6FC4;
   --c-ovh:     #C08A24;
   --c-prof:    #1F7F5C;
+  --c-tax:     #8A4FB8;
   --grid:      #EADFD8;
+  --track:     #B3A196;
+  --warn-bg:   #FBEFD9;
+  --warn-ink:  #7A5210;
   --positive:  #477A63;
   --negative:  #B65F5F;
   --blue:      #4A6FA5;
   --violet:    #7A5EA8;
-  --amber:     #B4813A;
+  --amber:     #8F6420;
 
   --r-sm: 6px;  --r-md: 10px;  --r-lg: 14px;  --r-xl: 18px;
   --gutter: 16px;
@@ -39,14 +43,18 @@
     --border:    #3A2F28;
     --text:      #F2EAE5;
     --hint:      #9C8C83;
-    --accent:    #C9684E;
+    --accent:    #BD5A40;
     --accent-soft:#3A2520;
     --knob:      #F2EAE5;
     --c-ing:     #CE6B4A;
     --c-lab:     #5285D4;
     --c-ovh:     #B8871F;
     --c-prof:    #1E9A72;
+    --c-tax:     #A374D4;
     --grid:      #3A2F28;
+    --track:     #7A685C;
+    --warn-bg:   #3A2E18;
+    --warn-ink:  #E9C27A;
     --positive:  #5E9B80;
     --negative:  #CC7A7A;
     --blue:      #6E92C8;
@@ -64,14 +72,18 @@
   --border:    #3A2F28;
   --text:      #F2EAE5;
   --hint:      #9C8C83;
-  --accent:    #C9684E;
+  --accent:    #BD5A40;
   --accent-soft:#3A2520;
   --knob:      #F2EAE5;
   --c-ing:     #CE6B4A;
   --c-lab:     #5285D4;
   --c-ovh:     #B8871F;
   --c-prof:    #1E9A72;
+  --c-tax:     #A374D4;
   --grid:      #3A2F28;
+  --track:     #7A685C;
+  --warn-bg:   #3A2E18;
+  --warn-ink:  #E9C27A;
   --positive:  #5E9B80;
   --negative:  #CC7A7A;
   --blue:      #6E92C8;
@@ -291,9 +303,9 @@ body::before {
   z-index: 15;
 }
 .mainbtn-slot > button { max-width: 528px; margin: 0 auto; display: block; }
-body.tg .tabbar { display: none; }
+/* В Telegram главная кнопка нативная и живёт вне страницы, а вкладки остаются:
+   без них до рецептов и аналитики не добраться. */
 body.tg .mainbtn-slot { bottom: env(safe-area-inset-bottom, 0px); }
-body.tg .view { padding-bottom: 110px; }
 
 /* ---------------- Таббар ---------------- */
 .tabbar {
@@ -349,7 +361,8 @@ body.tg .view { padding-bottom: 110px; }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
-textarea.input { resize: vertical; min-height: 90px; font-family: var(--mono); font-size: 13px; }
+textarea.input { resize: vertical; min-height: 90px; }
+textarea.input.mono { font-family: var(--mono); font-size: 13px; }
 
 /* ---------------- Тумблер ---------------- */
 .switch-row {
@@ -363,7 +376,7 @@ textarea.input { resize: vertical; min-height: 90px; font-family: var(--mono); f
 .switch-row .sw-sub { font-size: 13px; color: var(--hint); margin-top: 2px; }
 .switch { position: relative; width: 46px; height: 28px; flex-shrink: 0; }
 .switch input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; z-index: 2; }
-.switch-track { position: absolute; inset: 0; background: var(--surface-2); border-radius: 999px; transition: background .18s; }
+.switch-track { position: absolute; inset: 0; background: var(--track); border-radius: 999px; transition: background .18s; }
 .switch-track::after {
   content: ''; position: absolute; top: 3px; left: 3px;
   width: 22px; height: 22px; border-radius: 50%;
@@ -405,6 +418,7 @@ textarea.input { resize: vertical; min-height: 90px; font-family: var(--mono); f
   font-family: var(--mono); font-size: 13px; cursor: pointer;
 }
 .cal-day.out { color: var(--hint); opacity: .45; background: transparent; }
+.cal-day.out.sel { opacity: 1; }
 .cal-day.today { border-color: var(--accent); font-weight: 700; }
 .cal-day.has { background: var(--accent-soft); }
 .cal-day.sel { background: var(--accent); color: var(--accent-ink); }
@@ -429,7 +443,7 @@ textarea.input { resize: vertical; min-height: 90px; font-family: var(--mono); f
 
 /* ---------------- Оценка ---------------- */
 .stars { display: inline-flex; gap: 2px; }
-.star { font-size: 15px; color: var(--border); line-height: 1; }
+.star { font-size: 15px; color: var(--track); line-height: 1; }
 .star.on { color: var(--c-ovh); }
 .rate-pick { display: flex; gap: 6px; }
 .rate-pick button {
@@ -444,3 +458,77 @@ textarea.input { resize: vertical; min-height: 90px; font-family: var(--mono); f
 .kpi-value { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 21px; font-weight: 700; letter-spacing: -.4px; margin-top: 3px; }
 .kpi-note { font-size: 12px; color: var(--hint); margin-top: 2px; }
 .kpi-card.wide { grid-column: 1 / -1; }
+
+/* ---------------- Исправления 0.4 ---------------- */
+.sw-title, .sw-sub { display: block; }
+.bar-fill { display: block; }
+.bar-row { grid-template-columns: minmax(0, 1fr) 72px 44px; }
+.bar-label { min-width: 0; }
+
+.data-table { width: auto; min-width: 100%; }
+.data-table th, .data-table td { white-space: nowrap; }
+.data-table td:first-child { white-space: normal; min-width: 110px; }
+.data-table tr.hl td { background: var(--accent-soft); }
+
+.chip { min-height: 40px; padding: 9px 15px; }
+.segmented button { min-height: 42px; }
+.btn-link { min-height: 40px; padding: 8px 0; }
+.cal-arrow { font-size: 26px; line-height: 1; }
+.rate-pick button { min-height: 48px; }
+
+select.input {
+  padding-right: 34px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--hint) 50%),
+    linear-gradient(135deg, var(--hint) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 52%, calc(100% - 13px) 52%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.warn-box {
+  background: var(--warn-bg); color: var(--warn-ink);
+  border-radius: var(--r-md); padding: 10px 12px; margin: 0 0 12px;
+  font-size: 13.5px; line-height: 1.45;
+}
+.warn-text { color: var(--warn-ink); }
+.row-bad { box-shadow: inset 3px 0 0 var(--negative); }
+.badge.red { color: var(--negative); }
+
+.demo-note {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px;
+  background: var(--accent-soft); border-radius: var(--r-md);
+  padding: 8px 12px; margin: 4px 0 12px; font-size: 13.5px; line-height: 1.4;
+}
+.demo-note > div { flex: 1 1 220px; min-width: 0; }
+
+.clamp1, .clamp2 { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+.clamp1 { -webkit-line-clamp: 1; }
+.clamp2 { -webkit-line-clamp: 2; }
+.row-main { min-width: 0; }
+
+.btn-destructive { background: var(--negative) !important; }
+.toast-error { background: var(--negative); color: #fff; border-radius: var(--r-md); }
+.toast { bottom: calc(var(--tabbar-h) + 96px + env(safe-area-inset-bottom, 0px)); }
+.chart-wrap svg { width: 100%; height: auto; display: block; margin: 0 auto; }
+
+.total-row-plain { display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px; margin: 0 0 4px;
+  background: var(--accent-soft); border-radius: var(--r-md); font-size: 15px; }
+.toast.toast-top { bottom: auto; top: calc(env(safe-area-inset-top, 0px) + 12px); }
+
+.rate-pick button.on { color: #8F6420; }
+[data-theme="dark"] .rate-pick button.on { color: var(--c-ovh); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .rate-pick button.on { color: var(--c-ovh); } }
+.cal-day.today { opacity: 1; }
+
+/* 0.5: главная */
+.home-money { margin-top: 12px; }
+.home-money .home-left { border-top: 1px solid var(--border); }
+.home-money .num-lg { font-size: 24px; }
+#homeSeg { margin-bottom: 0; }
+
+/* 0.5.4: окно дня в календаре */
+.cal-dot.done { opacity: .35; }
+.day-empty { padding: 18px 2px 6px; font-size: 16px; color: var(--hint); text-align: center; }
+.day-lines { margin: 0 2px 12px; }
+.day-line { font-size: 15px; font-weight: 600; padding: 3px 0; }
